@@ -1,5 +1,5 @@
 *Notice*: This is a heavily modified hard fork of the original go-webview by abemedia.
-If you are looking for the official version, please use: https://github.com/crgimenes/go-webview
+If you are looking for the official version, please use: https://github.com/abemedia/go-webview/
 
 
 # go-webview
