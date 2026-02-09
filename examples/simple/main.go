@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/abemedia/go-webview"
-	_ "github.com/abemedia/go-webview/embedded"
+	"github.com/crgimenes/go-webview"
+	_ "github.com/crgimenes/go-webview/embedded"
 )
 
 func main() {

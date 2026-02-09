@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abemedia/go-webview"
-	_ "github.com/abemedia/go-webview/embedded"
+	"github.com/crgimenes/go-webview"
+	_ "github.com/crgimenes/go-webview/embedded"
 )
 
 // Needed to ensure that the tests run on the main thread.

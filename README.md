@@ -1,5 +1,5 @@
 *Notice*: This is a heavily modified hard fork of the original go-webview by abemedia.
-If you are looking for the official version, please use: https://github.com/abemedia/go-webview
+If you are looking for the official version, please use: https://github.com/crgimenes/go-webview
 
 
 # go-webview
@@ -20,8 +20,8 @@ Go bindings for [webview/webview](https://github.com/webview/webview) using [pur
 package main
 
 import (
-	"github.com/abemedia/go-webview"
-	_ "github.com/abemedia/go-webview/embedded" // embed native library
+	"github.com/crgimenes/go-webview"
+	_ "github.com/crgimenes/go-webview/embedded" // embed native library
 )
 
 func main() {
@@ -49,7 +49,7 @@ go build -ldflags="-H windowsgui" .
 This package requires native WebView libraries per-platform. To embed them in your app import the `embedded` package.
 
 ```go
-import _ "github.com/abemedia/go-webview/embedded"
+import _ "github.com/crgimenes/go-webview/embedded"
 ```
 
 Or you can ship your application with `.dll`, `.so`, or `.dylib` files.
