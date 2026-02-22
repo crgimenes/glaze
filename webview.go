@@ -299,7 +299,7 @@ func (w *webview) Unbind(name string) error {
 	return nil
 }
 
-var errorType = reflect.TypeOf((*error)(nil)).Elem()
+var errorType = reflect.TypeFor[error]()
 
 // makeFuncWrapper inspects a user-supplied function "f" via reflection once,
 // validating its signature and caching the relevant details.
@@ -322,7 +322,7 @@ func makeFuncWrapper(f any) (func(id, req string) (any, error), error) {
 	numIn := funcType.NumIn()
 	isVariadic := funcType.IsVariadic()
 	inTypes := make([]reflect.Type, numIn)
-	for i := 0; i < numIn; i++ {
+	for i := range numIn {
 		inTypes[i] = funcType.In(i)
 	}
 
