@@ -1,137 +1,156 @@
 # Glaze
 
-Go bindings for [webview/webview](https://github.com/webview/webview) using [purego](https://github.com/ebitengine/purego), with **no CGO**, and prebuilt native libraries for Windows, macOS, and Linux.
+Glaze is a pure Go desktop WebView binding built on top of [webview/webview](https://github.com/webview/webview) and [purego](https://github.com/ebitengine/purego).
 
-## Features
+This repository started from the original `go-webview` project, but it has diverged significantly and is maintained as a separate codebase with its own goals and APIs.
 
-- No CGO
-- Cross-platform (Windows, macOS, Linux)
-- Prebuilt dynamic libraries included
-- Bind Go functions to JavaScript
-- Fully embeddable in pure Go projects
+## Goals
 
-## Basic Example
+- Keep a CGo-free desktop integration layer for Go applications.
+- Provide pragmatic helpers for desktop app workflows.
+- Keep behavior explicit and testable.
+- Stay friendly to multi-module `go.work` development.
 
-```go
-package main
+## Key Features
 
-import (
- "log"
+- No CGo
+- Windows, macOS, and Linux support
+- Native library loading with embedded runtime assets
+- JavaScript to Go binding support
+- Utility helpers for desktop app patterns: `BindMethods`, `RenderHTML`, `AppWindow`
 
- "github.com/crgimenes/glaze"
- _ "github.com/crgimenes/glaze/embedded" // embed native library
-)
+## Example Screenshot
 
-func main() {
- w, err := glaze.New(true)
- if err != nil {
-  log.Fatal(err)
- }
- defer w.Destroy()
+Desktop example (`examples/desktop`):
 
- w.SetTitle("Greetings")
- w.SetSize(480, 320, glaze.HintNone)
- w.SetHtml("Hello World!")
- w.Run()
-}
-```
+![Glaze Desktop Example](imgs/ScreenshotExampleDesktop.png)
 
-See [./examples/bind](./examples/bind) for an example binding Go functions to JavaScript.
-
-## Building for Windows
-
-When building Windows apps, set the following flag: `-ldflags="-H windowsgui"`.
+## Install
 
 ```bash
-go build -ldflags="-H windowsgui" .
+go get github.com/crgimenes/glaze@latest
 ```
 
-## Testing
-
-Run unit tests (default, headless-safe):
-
-```bash
-go test ./...
-```
-
-Run GUI integration test (requires desktop session and window support):
-
-```bash
-go test -tags=integration -run TestWebview ./...
-```
-
-## Embedded Libraries
-
-This package requires native WebView libraries per-platform. To embed them in your app import the `embedded` package.
+To use embedded native libraries:
 
 ```go
 import _ "github.com/crgimenes/glaze/embedded"
 ```
 
-Or you can ship your application with `.dll`, `.so`, or `.dylib` files.
-Ensure these are discoverable at runtime by placing them in the same folder as your executable.
-For MacOS `.app` bundles, place the `.dylib` file into the `Frameworks` folder.
+## Quick Start
 
-See the [`embedded`](./embedded) folder for pre-built libraries you can ship with your application.
+```go
+package main
 
-## Helpers for Desktop Applications
+import (
+	"log"
+
+	"github.com/crgimenes/glaze"
+	_ "github.com/crgimenes/glaze/embedded"
+)
+
+func main() {
+	w, err := glaze.New(true)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer w.Destroy()
+
+	w.SetTitle("Glaze")
+	w.SetSize(800, 600, glaze.HintNone)
+	w.SetHtml("<h1>Hello from Glaze</h1>")
+	w.Run()
+}
+```
+
+## Desktop Helpers
 
 ### BindMethods
 
-`BindMethods` automatically binds all exported methods of a Go struct as JavaScript functions. Method names are converted from CamelCase to snake_case with a prefix.
+`BindMethods` exports all public methods from a Go value to JavaScript names with a prefix.
 
 ```go
 type Store struct{}
-func (s *Store) GetItems() []string   { return []string{"a", "b"} }
-func (s *Store) AddItem(name string)  { /* ... */ }
 
-// Binds: window.api_get_items(), window.api_add_item(name)
-bound, err := glaze.BindMethods(w, "api", &Store{})
+func (s *Store) GetItems() []string { return []string{"a", "b"} }
+
+bound, err := glaze.BindMethods(w, "store", &Store{})
 ```
 
 ### RenderHTML
 
-`RenderHTML` renders a Go `html/template` to a string, suitable for `SetHtml()`. This lets you reuse Go template definitions without an HTTP server.
+`RenderHTML` renders a named `html/template` to a string for `SetHtml`.
 
 ```go
-tpl := template.Must(template.ParseFiles("ui.html"))
-html, err := glaze.RenderHTML(tpl, "main", data)
+html, err := glaze.RenderHTML(tpl, "page", data)
+if err != nil {
+	return err
+}
 w.SetHtml(html)
 ```
 
 ### AppWindow
 
-`AppWindow` wraps an `http.Handler` in a native window with a local loopback server. This is the easiest way to turn a web application (e.g. a devengine app) into a desktop app:
+`AppWindow` wraps an `http.Handler` in a native window and local loopback server.
 
 ```go
 err := glaze.AppWindow(glaze.AppOptions{
-    Title:   "My App",
-    Width:   1280,
-    Height:  800,
-    Debug:   true,
-    Handler: mux, // your http.ServeMux
-    OnReady: func(addr string) { fmt.Println("Serving on", addr) },
+	Title:   "My App",
+	Width:   1280,
+	Height:  800,
+	Handler: mux,
 })
 ```
 
-The server starts on a random port, the window opens, and when the user closes it the server shuts down automatically.
+## Running Examples
 
-### Local-First Desktop Pattern
+From the repository root:
 
-For local desktop apps without an HTTP server, expose Go services directly to JavaScript via `Bind`:
-
-```go
-store := &MyStore{}
-w, _ := glaze.New(true)
-glaze.BindMethods(w, "store", store) // JS calls Go directly
-w.SetHtml(myHTML)
-w.Run()
+```bash
+go run ./examples/simple
+go run ./examples/bind
 ```
 
-See [./examples/desktop](./examples/desktop) and [./examples/filorepl](./examples/filorepl) for complete working examples.
+From each example directory:
 
-## Acknowledgements
+```bash
+cd examples/appwindow && go run .
+cd examples/desktop && go run .
+cd examples/filorepl && go run .
+```
 
-- [abemedia/go-webview](https://github.com/abemedia/go-webview) — original Go bindings that inspired this project (Glaze is a heavily modified hard fork)
-- [webview/webview](https://github.com/webview/webview) — core native UI library
-- [purego](https://github.com/ebitengine/purego) — pure-Go `dlopen` magic
+## Testing
+
+Default tests (headless safe):
+
+```bash
+go test ./...
+```
+
+GUI integration test:
+
+```bash
+go test -tags=integration -run TestWebview ./...
+```
+
+## Building on Windows
+
+Use `windowsgui` to hide the console window:
+
+```bash
+go build -ldflags="-H windowsgui" .
+```
+
+## Project Layout
+
+- `webview.go` - core API and binding internals
+- `appwindow.go` - desktop window plus local HTTP server helper
+- `helpers.go` - utility helpers (`BindMethods`, `RenderHTML`)
+- `embedded/` - embedded native library assets per platform
+- `examples/` - runnable sample applications
+
+## Acknowledgments
+
+- [abemedia/go-webview](https://github.com/abemedia/go-webview) for the original Go binding base
+- [webview/webview](https://github.com/webview/webview) for the native WebView implementation
+- [purego](https://github.com/ebitengine/purego) for dynamic linking without CGo
