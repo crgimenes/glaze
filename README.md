@@ -1,8 +1,4 @@
-*Notice*: This is a heavily modified hard fork of the original go-webview by abemedia.
-If you are looking for the official version, please use: https://github.com/abemedia/go-webview/
-
-
-# go-webview
+# Glaze
 
 Go bindings for [webview/webview](https://github.com/webview/webview) using [purego](https://github.com/ebitengine/purego), with **no CGO**, and prebuilt native libraries for Windows, macOS, and Linux.
 
@@ -20,23 +16,23 @@ Go bindings for [webview/webview](https://github.com/webview/webview) using [pur
 package main
 
 import (
-	"log"
+ "log"
 
-	"github.com/crgimenes/go-webview"
-	_ "github.com/crgimenes/go-webview/embedded" // embed native library
+ "github.com/crgimenes/glaze"
+ _ "github.com/crgimenes/glaze/embedded" // embed native library
 )
 
 func main() {
-	w, err := webview.New(true)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer w.Destroy()
+ w, err := glaze.New(true)
+ if err != nil {
+  log.Fatal(err)
+ }
+ defer w.Destroy()
 
-	w.SetTitle("Greetings")
-	w.SetSize(480, 320, webview.HintNone)
-	w.SetHtml("Hello World!")
-	w.Run()
+ w.SetTitle("Greetings")
+ w.SetSize(480, 320, glaze.HintNone)
+ w.SetHtml("Hello World!")
+ w.Run()
 }
 ```
 
@@ -69,7 +65,7 @@ go test -tags=integration -run TestWebview ./...
 This package requires native WebView libraries per-platform. To embed them in your app import the `embedded` package.
 
 ```go
-import _ "github.com/crgimenes/go-webview/embedded"
+import _ "github.com/crgimenes/glaze/embedded"
 ```
 
 Or you can ship your application with `.dll`, `.so`, or `.dylib` files.
@@ -90,7 +86,7 @@ func (s *Store) GetItems() []string   { return []string{"a", "b"} }
 func (s *Store) AddItem(name string)  { /* ... */ }
 
 // Binds: window.api_get_items(), window.api_add_item(name)
-bound, err := webview.BindMethods(w, "api", &Store{})
+bound, err := glaze.BindMethods(w, "api", &Store{})
 ```
 
 ### RenderHTML
@@ -99,7 +95,7 @@ bound, err := webview.BindMethods(w, "api", &Store{})
 
 ```go
 tpl := template.Must(template.ParseFiles("ui.html"))
-html, err := webview.RenderHTML(tpl, "main", data)
+html, err := glaze.RenderHTML(tpl, "main", data)
 w.SetHtml(html)
 ```
 
@@ -108,7 +104,7 @@ w.SetHtml(html)
 `AppWindow` wraps an `http.Handler` in a native window with a local loopback server. This is the easiest way to turn a web application (e.g. a devengine app) into a desktop app:
 
 ```go
-err := webview.AppWindow(webview.AppOptions{
+err := glaze.AppWindow(glaze.AppOptions{
     Title:   "My App",
     Width:   1280,
     Height:  800,
@@ -126,8 +122,8 @@ For local desktop apps without an HTTP server, expose Go services directly to Ja
 
 ```go
 store := &MyStore{}
-w, _ := webview.New(true)
-webview.BindMethods(w, "store", store) // JS calls Go directly
+w, _ := glaze.New(true)
+glaze.BindMethods(w, "store", store) // JS calls Go directly
 w.SetHtml(myHTML)
 w.Run()
 ```
@@ -136,5 +132,6 @@ See [./examples/desktop](./examples/desktop) and [./examples/filorepl](./example
 
 ## Acknowledgements
 
+- [abemedia/go-webview](https://github.com/abemedia/go-webview) — original Go bindings that inspired this project (Glaze is a heavily modified hard fork)
 - [webview/webview](https://github.com/webview/webview) — core native UI library
 - [purego](https://github.com/ebitengine/purego) — pure-Go `dlopen` magic

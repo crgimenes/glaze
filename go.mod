@@ -1,4 +1,4 @@
-module github.com/crgimenes/go-webview
+module github.com/crgimenes/glaze
 
 go 1.26
 

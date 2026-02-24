@@ -4,8 +4,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/crgimenes/go-webview"
-	_ "github.com/crgimenes/go-webview/embedded"
+	"github.com/crgimenes/glaze"
+	_ "github.com/crgimenes/glaze/embedded"
 )
 
 const html = `

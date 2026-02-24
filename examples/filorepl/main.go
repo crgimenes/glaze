@@ -1,6 +1,6 @@
 // Filo REPL — Desktop
 //
-// A graphical REPL for the Filo language built with go-webview.
+// A graphical REPL for the Filo language built with glaze.
 // Uses devengine's embedded Bootstrap 5 for the UI and all Filo
 // extension packages (math, rand, str, print).
 //
@@ -24,8 +24,8 @@ import (
 	"github.com/crgimenes/filo/filoprint"
 	"github.com/crgimenes/filo/filorand"
 	"github.com/crgimenes/filo/filostrings"
-	"github.com/crgimenes/go-webview"
-	_ "github.com/crgimenes/go-webview/embedded"
+	webview "github.com/crgimenes/glaze"
+	_ "github.com/crgimenes/glaze/embedded"
 )
 
 // FiloService wraps a Filo engine and maintains REPL state.

@@ -22,8 +22,8 @@ import (
 
 	"github.com/crgimenes/devengine/assets"
 	"github.com/crgimenes/devengine/db"
-	"github.com/crgimenes/go-webview"
-	_ "github.com/crgimenes/go-webview/embedded"
+	webview "github.com/crgimenes/glaze"
+	_ "github.com/crgimenes/glaze/embedded"
 )
 
 // NoteService wraps devengine's SQLite to provide note CRUD operations.
@@ -104,7 +104,7 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
   <nav class="navbar navbar-expand-lg border-bottom mb-4">
     <div class="container">
       <span class="navbar-brand fw-bold">📝 Desktop Notes</span>
-      <span class="navbar-text small text-muted">devengine/db + go-webview</span>
+      <span class="navbar-text small text-muted">devengine/db + glaze</span>
     </div>
   </nav>
 
@@ -130,7 +130,7 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
 
   <footer class="border-top mt-5 py-3 text-center text-muted">
     <div class="container">
-      <p class="mb-0 small">Powered by devengine (SQLite, no CGO) • go-webview (purego, no CGO)</p>
+      <p class="mb-0 small">Powered by devengine (SQLite, no CGO) • glaze (purego, no CGO)</p>
     </div>
   </footer>
 

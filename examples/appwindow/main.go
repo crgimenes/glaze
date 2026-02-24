@@ -19,8 +19,8 @@ import (
 	"strings"
 
 	"github.com/crgimenes/devengine/assets"
-	"github.com/crgimenes/go-webview"
-	_ "github.com/crgimenes/go-webview/embedded"
+	webview "github.com/crgimenes/glaze"
+	_ "github.com/crgimenes/glaze/embedded"
 )
 
 // pageData is passed to every template — mirrors the pattern used in edev/rpgstudios.
@@ -116,7 +116,7 @@ var templates = template.Must(template.New("").Parse(`
   <footer class="border-top mt-5 py-3 text-center text-muted">
     <div class="container">
       <p class="mb-0 small">
-        AppWindow example • devengine assets • go-webview • Go {{.Version}}
+        AppWindow example • devengine assets • glaze • Go {{.Version}}
       </p>
     </div>
   </footer>
