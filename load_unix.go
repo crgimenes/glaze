@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package webview
+package glaze
 
 import (
 	"fmt"

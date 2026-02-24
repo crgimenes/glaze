@@ -8,14 +8,14 @@ import (
 )
 
 func main() {
-	w, err := webview.New(true)
+	w, err := glaze.New(true)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer w.Destroy()
 
 	w.SetTitle("Basic Example")
-	w.SetSize(480, 320, webview.HintNone)
+	w.SetSize(480, 320, glaze.HintNone)
 	w.SetHtml("Thanks for using webview!")
 	w.Run()
 }

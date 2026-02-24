@@ -1,7 +1,7 @@
 // Desktop Example with devengine
 //
 // This example demonstrates a local-first desktop application that uses
-// devengine components directly from a webview window:
+// devengine components directly from a glaze window:
 //
 //   - devengine/db: SQLite database (WAL, RW/RO pools, no CGO)
 //   - devengine/assets: Bootstrap 5 CSS/JS, style.css (dark theme)
@@ -22,7 +22,7 @@ import (
 
 	"github.com/crgimenes/devengine/assets"
 	"github.com/crgimenes/devengine/db"
-	webview "github.com/crgimenes/glaze"
+	"github.com/crgimenes/glaze"
 	_ "github.com/crgimenes/glaze/embedded"
 )
 
@@ -256,18 +256,18 @@ func main() {
 	}
 	fmt.Println("Asset server:", baseURL)
 
-	w, err := webview.New(true)
+	w, err := glaze.New(true)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer w.Destroy()
 
 	w.SetTitle("Desktop Notes")
-	w.SetSize(640, 600, webview.HintNone)
+	w.SetSize(640, 600, glaze.HintNone)
 
 	// Bind all exported methods of NoteService as JS functions:
 	// window.notes_add, window.notes_list, window.notes_delete, window.notes_count
-	bound, err := webview.BindMethods(w, "notes", svc)
+	bound, err := glaze.BindMethods(w, "notes", svc)
 	if err != nil {
 		log.Fatal(err)
 	}

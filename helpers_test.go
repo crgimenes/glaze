@@ -1,4 +1,4 @@
-package webview
+package glaze
 
 import (
 	"errors"

@@ -1,12 +1,12 @@
 // AppWindow Example
 //
-// This example demonstrates how to use webview.AppWindow to wrap a standard
+// This example demonstrates how to use glaze.AppWindow to wrap a standard
 // HTTP application as a native desktop window. It uses devengine's embedded
 // Bootstrap 5 assets and Go templates rendered server-side — the same
 // pattern used by edev and rpgstudios.
 //
 // The key difference from the other examples is that ALL rendering happens
-// on the server side via Go templates served over HTTP. The webview is just
+// on the server side via Go templates served over HTTP. The glaze window is just
 // a browser window pointing to http://127.0.0.1:{port}. No Bind is needed.
 package main
 
@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/crgimenes/devengine/assets"
-	webview "github.com/crgimenes/glaze"
+	"github.com/crgimenes/glaze"
 	_ "github.com/crgimenes/glaze/embedded"
 )
 
@@ -192,7 +192,7 @@ func main() {
 	})
 
 	// That's it! AppWindow does everything else.
-	err := webview.AppWindow(webview.AppOptions{
+	err := glaze.AppWindow(glaze.AppOptions{
 		Title:   "Todo Desktop",
 		Width:   800,
 		Height:  600,

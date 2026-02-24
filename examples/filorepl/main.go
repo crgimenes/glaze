@@ -24,7 +24,7 @@ import (
 	"github.com/crgimenes/filo/filoprint"
 	"github.com/crgimenes/filo/filorand"
 	"github.com/crgimenes/filo/filostrings"
-	webview "github.com/crgimenes/glaze"
+	"github.com/crgimenes/glaze"
 	_ "github.com/crgimenes/glaze/embedded"
 )
 
@@ -382,17 +382,17 @@ func main() {
 	}
 	fmt.Println("Asset server:", baseURL)
 
-	w, err := webview.New(true)
+	w, err := glaze.New(true)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer w.Destroy()
 
 	w.SetTitle("Filo REPL")
-	w.SetSize(900, 600, webview.HintNone)
+	w.SetSize(900, 600, glaze.HintNone)
 
 	// Bind: window.filo_eval(script), window.filo_reset()
-	bound, err := webview.BindMethods(w, "filo", svc)
+	bound, err := glaze.BindMethods(w, "filo", svc)
 	if err != nil {
 		log.Fatal(err)
 	}

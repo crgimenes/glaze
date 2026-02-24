@@ -40,14 +40,14 @@ const html = `
 func main() {
 	var count int64
 
-	w, err := webview.New(true)
+	w, err := glaze.New(true)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer w.Destroy()
 
 	w.SetTitle("Bind Example")
-	w.SetSize(480, 320, webview.HintNone)
+	w.SetSize(480, 320, glaze.HintNone)
 	w.SetHtml(html)
 
 	// Binding for count which immediately returns.

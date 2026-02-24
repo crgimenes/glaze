@@ -1,6 +1,6 @@
 //go:build integration
 
-package webview_test
+package glaze_test
 
 import (
 	"runtime"
@@ -24,13 +24,13 @@ func TestWebview(t *testing.T) {
 
 	run := make(chan bool, 1)
 
-	w, err := webview.New(true)
+	w, err := glaze.New(true)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	w.SetTitle("Hello")
-	w.SetSize(800, 600, webview.HintNone)
+	w.SetSize(800, 600, glaze.HintNone)
 
 	err = w.Bind("run", func(b bool) {
 		run <- b
