@@ -390,11 +390,18 @@ func makeFuncWrapper(f any) (func(id, req string) (any, error), error) {
 			return nil, nil //nolint:nilnil
 		case 1:
 			if returnsError {
-				return nil, res[0].Interface().(error)
+				if v := res[0].Interface(); v != nil {
+					return nil, v.(error)
+				}
+				return nil, nil //nolint:nilnil
 			}
 			return res[0].Interface(), nil
 		case 2:
-			return res[0].Interface(), res[1].Interface().(error)
+			var err error
+			if v := res[1].Interface(); v != nil {
+				err = v.(error)
+			}
+			return res[0].Interface(), err
 		default:
 			panic("unreachable")
 		}

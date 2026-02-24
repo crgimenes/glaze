@@ -64,6 +64,45 @@ For MacOS `.app` bundles, place the `.dylib` file into the `Frameworks` folder.
 
 See the [`embedded`](./embedded) folder for pre-built libraries you can ship with your application.
 
+## Helpers for Desktop Applications
+
+### BindMethods
+
+`BindMethods` automatically binds all exported methods of a Go struct as JavaScript functions. Method names are converted from CamelCase to snake_case with a prefix.
+
+```go
+type Store struct{}
+func (s *Store) GetItems() []string   { return []string{"a", "b"} }
+func (s *Store) AddItem(name string)  { /* ... */ }
+
+// Binds: window.api_get_items(), window.api_add_item(name)
+bound, err := webview.BindMethods(w, "api", &Store{})
+```
+
+### RenderHTML
+
+`RenderHTML` renders a Go `html/template` to a string, suitable for `SetHtml()`. This lets you reuse Go template definitions without an HTTP server.
+
+```go
+tpl := template.Must(template.ParseFiles("ui.html"))
+html, err := webview.RenderHTML(tpl, "main", data)
+w.SetHtml(html)
+```
+
+### Local-First Desktop Pattern
+
+For local desktop apps, you can expose Go services directly to JavaScript via `Bind` — no HTTP server, session, or auth needed:
+
+```go
+store := &MyStore{}
+w, _ := webview.New(true)
+webview.BindMethods(w, "store", store) // JS calls Go directly
+w.SetHtml(myHTML)
+w.Run()
+```
+
+See [./examples/desktop](./examples/desktop) for a complete working example.
+
 ## Acknowledgements
 
 - [webview/webview](https://github.com/webview/webview) — core native UI library
