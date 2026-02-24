@@ -59,52 +59,77 @@ var templates = template.Must(template.New("").Parse(`
 <head>
   {{template "head"}}
   <title>{{.Title}}</title>
+  <style>
+    .shell-col { max-width: 720px; }
+    .shell-card { border: 1px solid var(--bs-border-color); }
+    .shell-list .list-group-item { border-color: var(--bs-border-color); }
+    .shell-text {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    @media (max-width: 575.98px) {
+      .navbar .container { flex-wrap: wrap; row-gap: .25rem; }
+      .shell-input-group { flex-wrap: wrap; }
+      .shell-input-group > .form-control,
+      .shell-input-group > .btn {
+        width: 100%;
+        flex: 1 0 100%;
+      }
+      .shell-list .list-group-item { flex-wrap: wrap; }
+      .shell-actions { margin-left: auto; }
+    }
+  </style>
 </head>
 <body>
   <nav class="navbar navbar-expand-lg border-bottom">
     <div class="container">
-      <span class="navbar-brand fw-bold">✅ {{.Title}}</span>
+      <span class="navbar-brand fw-bold">{{.Title}}</span>
       <span class="navbar-text small text-muted">
-        {{.Version}} • {{len .Items}} items
+        appwindow http mode - {{len .Items}} items
       </span>
     </div>
   </nav>
 
   <main class="container py-4">
     <div class="row justify-content-center">
-      <div class="col-lg-6">
+      <div class="col-lg-6 shell-col">
 
-        <form method="POST" action="/add" class="mb-4">
-          <div class="input-group">
-            <input type="text" name="text" class="form-control form-control-lg"
-                   placeholder="What needs to be done?" autofocus required>
-            <button type="submit" class="btn btn-primary btn-lg">Add</button>
+        <div class="card shell-card mb-4">
+          <div class="card-body">
+            <p class="text-muted text-uppercase small mb-2">Tasks</p>
+            <form method="POST" action="/add" class="m-0">
+              <div class="input-group shell-input-group">
+                <input type="text" name="text" class="form-control form-control-lg"
+                       placeholder="What needs to be done?" autofocus required>
+                <button type="submit" class="btn btn-primary btn-lg">Add</button>
+              </div>
+            </form>
           </div>
-        </form>
+        </div>
 
         {{if .Items}}
-        <div class="list-group">
+        <div class="list-group shell-list">
           {{range .Items}}
           <div class="list-group-item d-flex align-items-center gap-3">
             <form method="POST" action="/toggle" class="m-0">
               <input type="hidden" name="id" value="{{.ID}}">
               <button type="submit" class="btn btn-sm {{if .Done}}btn-success{{else}}btn-outline-secondary{{end}}">
-                {{if .Done}}✓{{else}}&nbsp;{{end}}
+                {{if .Done}}Done{{else}}Mark{{end}}
               </button>
             </form>
-            <span class="flex-grow-1 {{if .Done}}text-decoration-line-through text-muted{{end}}">
+            <span class="flex-grow-1 shell-text {{if .Done}}text-decoration-line-through text-muted{{end}}">
               {{.Text}}
             </span>
-            <form method="POST" action="/delete" class="m-0">
+            <form method="POST" action="/delete" class="m-0 shell-actions">
               <input type="hidden" name="id" value="{{.ID}}">
-              <button type="submit" class="btn btn-sm btn-outline-danger">✕</button>
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
             </form>
           </div>
           {{end}}
         </div>
         {{else}}
         <div class="text-center text-muted py-5">
-          <div class="fs-1 mb-2">📋</div>
           <p>No tasks yet. Add one above!</p>
         </div>
         {{end}}
@@ -115,9 +140,8 @@ var templates = template.Must(template.New("").Parse(`
 
   <footer class="border-top mt-5 py-3 text-center text-muted">
     <div class="container">
-      <p class="mb-0 small">
-        AppWindow example • devengine assets • glaze • Go {{.Version}}
-      </p>
+      <p class="mb-1 small">Glaze appwindow example</p>
+      <p class="mb-0 small">devengine assets and server-side Go templates</p>
     </div>
   </footer>
 </body>
@@ -127,7 +151,7 @@ var templates = template.Must(template.New("").Parse(`
 
 func render(w http.ResponseWriter, items []todoItem) {
 	data := pageData{
-		Title:   "Todo Desktop",
+		Title:   "Glaze - AppWindow Todo",
 		Version: runtime.Version(),
 		Items:   items,
 	}
@@ -193,13 +217,14 @@ func main() {
 
 	// That's it! AppWindow does everything else.
 	err := glaze.AppWindow(glaze.AppOptions{
-		Title:   "Todo Desktop",
-		Width:   800,
-		Height:  600,
-		Debug:   true,
-		Handler: mux,
-		OnReady: func(addr string) {
-			log.Println("Serving on", addr)
+		Transport: glaze.AppTransportAuto,
+		Title:     "Glaze - AppWindow Todo",
+		Width:     800,
+		Height:    600,
+		Debug:     true,
+		Handler:   mux,
+		OnReadyInfo: func(info glaze.AppReadyInfo) {
+			log.Printf("Transport=%s Backend=%s GatewayURL=%s", info.Transport, info.Backend, info.URL)
 		},
 	})
 	if err != nil {

@@ -92,28 +92,44 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="/assets/bootstrap/css/bootstrap.min.css">
   <link rel="stylesheet" href="/assets/style.css">
-  <title>Desktop Notes</title>
+  <title>Glaze - Desktop Notes</title>
   <style>
-    .note-item { transition: all 0.2s ease; }
-    .note-item:hover { transform: translateX(4px); }
-    .btn-del { opacity: 0.5; transition: opacity 0.2s; }
-    .btn-del:hover { opacity: 1; }
+    .shell-col { max-width: 720px; }
+    .shell-card { border: 1px solid var(--bs-border-color); }
+    .shell-list .list-group-item { border-color: var(--bs-border-color); }
+    .shell-text {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    @media (max-width: 575.98px) {
+      .navbar .container { flex-wrap: wrap; row-gap: .25rem; }
+      .shell-input-group { flex-wrap: wrap; }
+      .shell-input-group > .form-control,
+      .shell-input-group > .btn {
+        width: 100%;
+        flex: 1 0 100%;
+      }
+      .shell-list .list-group-item { flex-wrap: wrap; }
+      .shell-actions { margin-left: auto; }
+    }
   </style>
 </head>
 <body>
-  <nav class="navbar navbar-expand-lg border-bottom mb-4">
+  <nav class="navbar navbar-expand-lg border-bottom">
     <div class="container">
-      <span class="navbar-brand fw-bold">📝 Desktop Notes</span>
-      <span class="navbar-text small text-muted">devengine/db + glaze</span>
+      <span class="navbar-brand fw-bold">Glaze - Desktop Notes</span>
+      <span class="navbar-text small text-muted">http assets + sqlite + bindmethods</span>
     </div>
   </nav>
 
-  <main class="container">
+  <main class="container py-4">
     <div class="row justify-content-center">
-      <div class="col-lg-8">
-        <div class="card border-0 shadow-sm mb-4">
+      <div class="col-lg-8 shell-col">
+        <div class="card shell-card mb-4">
           <div class="card-body">
-            <div class="input-group">
+            <p class="text-muted text-uppercase small mb-2">Notes</p>
+            <div class="input-group shell-input-group">
               <input type="text" id="input" class="form-control form-control-lg"
                      placeholder="What's on your mind?" autofocus>
               <button id="add" class="btn btn-primary btn-lg px-4">Add</button>
@@ -121,16 +137,17 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
           </div>
         </div>
 
-        <div id="notes"></div>
+        <div id="notes" class="list-group shell-list"></div>
 
-        <p id="count" class="text-muted text-center mt-3 small"></p>
+        <p id="count" class="text-muted text-center mt-4 small"></p>
       </div>
     </div>
   </main>
 
   <footer class="border-top mt-5 py-3 text-center text-muted">
     <div class="container">
-      <p class="mb-0 small">Powered by devengine (SQLite, no CGO) • glaze (purego, no CGO)</p>
+      <p class="mb-1 small">Glaze desktop notes example</p>
+      <p class="mb-0 small">devengine db (sqlite, no cgo) and BindMethods</p>
     </div>
   </footer>
 
@@ -148,22 +165,17 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
       if (!notes || notes.length === 0) {
         notesList.innerHTML =
           '<div class="text-center text-muted py-5">' +
-            '<div class="fs-1 mb-2">📋</div>' +
             '<p>No notes yet. Type something above!</p>' +
           '</div>';
       } else {
         notesList.innerHTML = notes.map(n =>
-          '<div class="card border-0 shadow-sm mb-2 note-item">' +
-            '<div class="card-body d-flex align-items-center py-2 px-3">' +
-              '<span class="flex-grow-1">' + escapeHtml(n.text) + '</span>' +
-              '<button class="btn btn-sm btn-outline-danger btn-del ms-2" data-id="' + n.id + '">' +
-                '✕' +
-              '</button>' +
-            '</div>' +
+          '<div class="list-group-item d-flex align-items-center gap-3">' +
+            '<span class="flex-grow-1 shell-text">' + escapeHtml(n.text) + '</span>' +
+            '<button class="btn btn-sm btn-outline-danger ms-2 shell-actions" data-id="' + n.id + '">Delete</button>' +
           '</div>'
         ).join("");
 
-        notesList.querySelectorAll(".btn-del").forEach(btn => {
+        notesList.querySelectorAll("button[data-id]").forEach(btn => {
           btn.addEventListener("click", async () => {
             await window.notes_delete(Number(btn.dataset.id));
             await refresh();
@@ -262,7 +274,7 @@ func main() {
 	}
 	defer w.Destroy()
 
-	w.SetTitle("Desktop Notes")
+	w.SetTitle("Glaze - Desktop Notes")
 	w.SetSize(640, 600, glaze.HintNone)
 
 	// Bind all exported methods of NoteService as JS functions:

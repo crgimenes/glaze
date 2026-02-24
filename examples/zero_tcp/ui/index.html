@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glaze Zero TCP Example</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <nav class="navbar border-bottom">
+    <div class="container nav-content">
+      <span class="navbar-brand">Glaze - Zero TCP</span>
+      <span class="navbar-text">file ui + bindmethods</span>
+    </div>
+  </nav>
+
+  <main class="container page">
+    <div class="row">
+      <div class="col">
+        <div class="card mb-4">
+          <div class="card-body">
+            <p class="section-title">Tasks</p>
+            <div class="input-group">
+              <input id="taskInput" type="text" placeholder="What needs to be done?" autofocus>
+              <button id="addBtn" class="btn btn-primary" type="button">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="empty" class="text-center text-muted py-4">No tasks yet. Add one above.</div>
+        <ul id="taskList" class="list-group"></ul>
+      </div>
+    </div>
+  </main>
+
+  <footer class="border-top footer text-center text-muted">
+    <div class="container">
+      <p id="count" class="small">0 items</p>
+      <p class="small">Glaze zero tcp example</p>
+      <p class="small">No HTTP server and no loopback gateway</p>
+    </div>
+  </footer>
+
+  <script defer src="app.js"></script>
+</body>
+</html>

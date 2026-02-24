@@ -121,21 +121,33 @@ local loopback HTTP server.
 
 What it does:
 
-- Starts an HTTP server on loopback (`127.0.0.1`) using a random free port by
-  default (or a custom `Addr`).
+- Supports selectable transport with platform-aware default:
+  - `auto` (default): `unix` on macOS/Linux, `tcp` on Windows
+  - `tcp`: direct loopback HTTP (`127.0.0.1`)
+  - `unix`: handler served on Unix socket with a lightweight loopback HTTP
+    gateway for browser navigation
+- Starts listeners using random free ports/paths by default (or custom
+  `Addr`/`UnixSocketPath`).
 - Creates a native window and navigates it to that local URL.
 - Runs the UI loop and closes the HTTP server when the window exits.
 - Supports window sizing, title, debug mode, and optional readiness callback.
+  - `OnReady`: receives browser URL (always `http://127.0.0.1:...`).
+  - `OnReadyInfo`: receives resolved backend details (`Transport`, `Backend`,
+    `Gateway`) so you can verify unix vs tcp in logs.
 
 This is the simplest way to reuse an existing `net/http` application as a
 desktop app with minimal changes to your routing, templates, and assets.
 
 ```go
 err := glaze.AppWindow(glaze.AppOptions{
-	Title:   "My App",
-	Width:   1280,
-	Height:  800,
-	Handler: mux,
+	Title:     "My App",
+	Width:     1280,
+	Height:    800,
+	Transport: glaze.AppTransportAuto,
+	Handler:   mux,
+	OnReadyInfo: func(info glaze.AppReadyInfo) {
+		log.Printf("transport=%s backend=%s gateway=%s", info.Transport, info.Backend, info.Gateway)
+	},
 })
 ```
 
@@ -146,6 +158,7 @@ From the repository root:
 ```bash
 go run ./examples/simple
 go run ./examples/bind
+go run ./examples/zero_tcp
 ```
 
 From each example directory:
@@ -155,6 +168,9 @@ cd examples/appwindow && go run .
 cd examples/desktop && go run .
 cd examples/filorepl && go run .
 ```
+
+`examples/zero_tcp` demonstrates a local-first UI with `SetHtml + BindMethods`
+only. It does not start an HTTP server, so there is no loopback TCP gateway.
 
 ## Testing
 
