@@ -1,3 +1,5 @@
+//go:build integration
+
 package webview_test
 
 import (

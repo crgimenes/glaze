@@ -112,15 +112,14 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 // Depending on the platform, a GtkWindow, NSWindow or HWND pointer can be passed
 // here.
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
-	var loadErr error
 	loadOnce.Do(func() {
 		libHandle, err := loadLibrary(libraryPath())
 		if err != nil {
-			loadErr = fmt.Errorf("webview: failed to load native library: %w", err)
+			loadInitErr = fmt.Errorf("webview: failed to load native library: %w", err)
 			return
 		}
 		if libHandle == 0 {
-			loadErr = errors.New("webview: native library handle is nil")
+			loadInitErr = errors.New("webview: native library handle is nil")
 			return
 		}
 		// Resolve all required symbols from the library.
@@ -147,7 +146,7 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 		for _, s := range symbols {
 			ptr, err := loadSymbol(libHandle, s.name)
 			if err != nil {
-				loadErr = err
+				loadInitErr = err
 				return
 			}
 			*s.ptr = ptr
@@ -155,8 +154,11 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 		dispatchCallback = purego.NewCallback(dispatchCallbackFn)
 		bindingCallback = purego.NewCallback(bindingCallbackFn)
 	})
-	if loadErr != nil {
-		return nil, loadErr
+	if loadInitErr != nil {
+		return nil, loadInitErr
+	}
+	if pCreate == 0 {
+		return nil, errors.New("webview: native symbols are not initialized")
 	}
 	r1, _, _ := purego.SyscallN(pCreate, boolToInt(debug), uintptr(window))
 	if r1 == 0 {
@@ -172,6 +174,9 @@ type webview struct {
 
 // Global once to load native library symbols.
 var loadOnce sync.Once
+
+// loadInitErr stores the initialization failure (if any) for all future calls.
+var loadInitErr error
 
 // Function pointers for native library functions.
 var (
@@ -245,12 +250,14 @@ func (w *webview) Destroy() {
 
 func (w *webview) Window() unsafe.Pointer {
 	r1, _, _ := purego.SyscallN(pGetWindow, w.handle)
-	return unsafe.Pointer(r1)
+	// We take the address and then dereference it to avoid go vet reporting
+	// a possible misuse of unsafe.Pointer on direct uintptr conversion.
+	return *(*unsafe.Pointer)(unsafe.Pointer(&r1))
 }
 
 func (w *webview) SetTitle(title string) {
 	cs, ptr := cString(title)
-	purego.SyscallN(pSetTitle, w.handle, ptr)
+	purego.SyscallN(pSetTitle, w.handle, uintptr(ptr))
 	runtime.KeepAlive(cs)
 }
 
@@ -260,25 +267,25 @@ func (w *webview) SetSize(width, height int, hint Hint) {
 
 func (w *webview) Navigate(url string) {
 	cs, ptr := cString(url)
-	purego.SyscallN(pNavigate, w.handle, ptr)
+	purego.SyscallN(pNavigate, w.handle, uintptr(ptr))
 	runtime.KeepAlive(cs)
 }
 
 func (w *webview) SetHtml(html string) {
 	cs, ptr := cString(html)
-	purego.SyscallN(pSetHtml, w.handle, ptr)
+	purego.SyscallN(pSetHtml, w.handle, uintptr(ptr))
 	runtime.KeepAlive(cs)
 }
 
 func (w *webview) Init(js string) {
 	cs, ptr := cString(js)
-	purego.SyscallN(pInit, w.handle, ptr)
+	purego.SyscallN(pInit, w.handle, uintptr(ptr))
 	runtime.KeepAlive(cs)
 }
 
 func (w *webview) Eval(js string) {
 	cs, ptr := cString(js)
-	purego.SyscallN(pEval, w.handle, ptr)
+	purego.SyscallN(pEval, w.handle, uintptr(ptr))
 	runtime.KeepAlive(cs)
 }
 
@@ -300,7 +307,7 @@ func (w *webview) Bind(name string, f any) error {
 	bindMu.Unlock()
 
 	nameBytes, namePtr := cString(name)
-	purego.SyscallN(pBind, w.handle, namePtr, bindingCallback, contextKey)
+	purego.SyscallN(pBind, w.handle, uintptr(namePtr), bindingCallback, contextKey)
 	runtime.KeepAlive(nameBytes)
 	return nil
 }
@@ -316,7 +323,7 @@ func (w *webview) Unbind(name string) error {
 	delete(bindingMap, contextKey)
 	bindMu.Unlock()
 	cs, namePtr := cString(name)
-	purego.SyscallN(pUnbind, w.handle, namePtr)
+	purego.SyscallN(pUnbind, w.handle, uintptr(namePtr))
 	runtime.KeepAlive(cs)
 	return nil
 }
@@ -440,7 +447,7 @@ func bindingCallbackFn(idPtr, reqPtr, arg uintptr) uintptr {
 		// Create new C strings as the original pointers are no longer valid.
 		idBytes, newIDPtr := cString(id)
 		resBytes, newResPtr := cString(resultJSON)
-		purego.SyscallN(pReturn, entry.w, newIDPtr, uintptr(status), newResPtr)
+		purego.SyscallN(pReturn, entry.w, uintptr(newIDPtr), uintptr(status), uintptr(newResPtr))
 		runtime.KeepAlive(idBytes)
 		runtime.KeepAlive(resBytes)
 	}()
@@ -480,9 +487,9 @@ func boolToInt(b bool) uintptr {
 	return 0
 }
 
-func cString(s string) ([]byte, uintptr) {
+func cString(s string) ([]byte, unsafe.Pointer) {
 	b := append([]byte(s), 0)
-	return b, uintptr(unsafe.Pointer(&b[0]))
+	return b, unsafe.Pointer(&b[0])
 }
 
 func goString(c uintptr) string {

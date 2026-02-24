@@ -16,7 +16,21 @@ import (
 //
 // Returns the list of bound function names and the first error encountered.
 func BindMethods(w WebView, prefix string, obj any) ([]string, error) {
+	if w == nil {
+		return nil, fmt.Errorf("webview: BindMethods requires a non-nil WebView")
+	}
+	if obj == nil {
+		return nil, fmt.Errorf("webview: BindMethods requires a non-nil object")
+	}
+
 	v := reflect.ValueOf(obj)
+	if !v.IsValid() {
+		return nil, fmt.Errorf("webview: BindMethods received an invalid object")
+	}
+	if v.Kind() == reflect.Pointer && v.IsNil() {
+		return nil, fmt.Errorf("webview: BindMethods requires a non-nil object")
+	}
+
 	t := v.Type()
 
 	var bound []string

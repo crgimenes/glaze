@@ -50,6 +50,20 @@ When building Windows apps, set the following flag: `-ldflags="-H windowsgui"`.
 go build -ldflags="-H windowsgui" .
 ```
 
+## Testing
+
+Run unit tests (default, headless-safe):
+
+```bash
+go test ./...
+```
+
+Run GUI integration test (requires desktop session and window support):
+
+```bash
+go test -tags=integration -run TestWebview ./...
+```
+
 ## Embedded Libraries
 
 This package requires native WebView libraries per-platform. To embed them in your app import the `embedded` package.
