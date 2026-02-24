@@ -2,7 +2,5 @@ github.com/crgimenes/devengine v0.0.6 h1:Nbt14f3X+BnQu/MltGuRZIr+1ga+jOshqamRYDZ
 github.com/crgimenes/devengine v0.0.6/go.mod h1:xgGlILhvnbVPI2v6zz7cdcLBhYQ6SE3CAE0KrtVBrFI=
 github.com/crgimenes/filo v0.0.6 h1:pdk7CfGEFXC5NoKG5TypFNoIJsZXozdUu07nvzS2FLw=
 github.com/crgimenes/filo v0.0.6/go.mod h1:yPh0f5RhNPhqbjN7LmRVu/+c2oVu5KyQFFG07bHPxbk=
-github.com/crgimenes/glaze v0.0.2 h1:cf5oDxUaqdoPuqJjxJlT7+7faYfpU8InnjuRD1LLDsk=
-github.com/crgimenes/glaze v0.0.2/go.mod h1:K/N/9uTQ4J199o0OotoNd1fA+8HFnWZznnXz2SpAKqc=
 github.com/ebitengine/purego v0.10.0 h1:QIw4xfpWT6GWTzaW5XEKy3HXoqrJGx1ijYHzTF0/ISU=
 github.com/ebitengine/purego v0.10.0/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
