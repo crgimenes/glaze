@@ -67,7 +67,23 @@ func main() {
 
 ### BindMethods
 
-`BindMethods` exports all public methods from a Go value to JavaScript names with a prefix.
+`BindMethods` is a convenience layer over `Bind` that exposes all exported
+methods of a Go value as JavaScript-callable functions.
+
+What it does:
+
+- Reflects over exported methods on a struct or pointer receiver.
+- Builds JavaScript names using a prefix and snake_case conversion.
+  - Example: `GetUserByID` with prefix `api` becomes `api_get_user_by_id`.
+- Applies the same function signature rules as `Bind`:
+  - no return
+  - value
+  - error
+  - value and error
+- Returns the list of bound names so you can log or verify registration.
+
+This is useful when you have a service object and want to expose a consistent
+JavaScript API without writing one `Bind` call per method.
 
 ```go
 type Store struct{}
@@ -79,7 +95,16 @@ bound, err := glaze.BindMethods(w, "store", &Store{})
 
 ### RenderHTML
 
-`RenderHTML` renders a named `html/template` to a string for `SetHtml`.
+`RenderHTML` renders a named Go `html/template` into a string for `SetHtml`.
+
+What it does:
+
+- Executes a specific template by name (including nested template calls).
+- Returns the final HTML string.
+- Wraps template execution errors with template context.
+
+This is useful when you want server-style template rendering in a local desktop
+app without running an HTTP server for that page.
 
 ```go
 html, err := glaze.RenderHTML(tpl, "page", data)
@@ -91,7 +116,19 @@ w.SetHtml(html)
 
 ### AppWindow
 
-`AppWindow` wraps an `http.Handler` in a native window and local loopback server.
+`AppWindow` wraps an `http.Handler` inside a native desktop window backed by a
+local loopback HTTP server.
+
+What it does:
+
+- Starts an HTTP server on loopback (`127.0.0.1`) using a random free port by
+  default (or a custom `Addr`).
+- Creates a native window and navigates it to that local URL.
+- Runs the UI loop and closes the HTTP server when the window exits.
+- Supports window sizing, title, debug mode, and optional readiness callback.
+
+This is the simplest way to reuse an existing `net/http` application as a
+desktop app with minimal changes to your routing, templates, and assets.
 
 ```go
 err := glaze.AppWindow(glaze.AppOptions{
