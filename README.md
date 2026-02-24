@@ -20,17 +20,23 @@ Go bindings for [webview/webview](https://github.com/webview/webview) using [pur
 package main
 
 import (
+	"log"
+
 	"github.com/crgimenes/go-webview"
 	_ "github.com/crgimenes/go-webview/embedded" // embed native library
 )
 
 func main() {
-	w := webview.New(true)
+	w, err := webview.New(true)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer w.Destroy()
+
 	w.SetTitle("Greetings")
 	w.SetSize(480, 320, webview.HintNone)
 	w.SetHtml("Hello World!")
 	w.Run()
-	w.Destroy()
 }
 ```
 

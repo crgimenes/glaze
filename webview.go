@@ -1,9 +1,9 @@
 package webview
 
 import (
-	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"runtime"
 	"sync"
@@ -12,8 +12,11 @@ import (
 	"github.com/ebitengine/purego"
 )
 
+// init locks the OS thread to ensure all UI calls happen on the main thread.
+// This is required by Cocoa (macOS) and GTK (Linux) which mandate that GUI
+// operations run on the main thread. This is a justified exception to the
+// "no init() side effects" guideline (AGENTS.md §4.3).
 func init() {
-	// Ensure that main.main is called from the main thread.
 	runtime.LockOSThread()
 }
 
@@ -100,7 +103,7 @@ type WebView interface {
 
 // New calls NewWindow to create a new window and a new webview instance. If debug
 // is non-zero - developer tools will be enabled (if the platform supports them).
-func New(debug bool) WebView { return NewWindow(debug, nil) }
+func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 
 // NewWindow creates a new webview instance. If debug is non-zero - developer
 // tools will be enabled (if the platform supports them). Window parameter can be
@@ -108,39 +111,58 @@ func New(debug bool) WebView { return NewWindow(debug, nil) }
 // embedded into the given parent window. Otherwise a new window is created.
 // Depending on the platform, a GtkWindow, NSWindow or HWND pointer can be passed
 // here.
-func NewWindow(debug bool, window unsafe.Pointer) WebView {
+func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
+	var loadErr error
 	loadOnce.Do(func() {
 		libHandle, err := loadLibrary(libraryPath())
 		if err != nil {
-			panic("webview: failed to load native library: " + err.Error())
+			loadErr = fmt.Errorf("webview: failed to load native library: %w", err)
+			return
 		}
 		if libHandle == 0 {
-			panic("webview: native library not loaded")
+			loadErr = errors.New("webview: native library handle is nil")
+			return
 		}
-		// Resolve all required symbols from the library
-		pCreate = loadSymbol(libHandle, "webview_create")
-		pDestroy = loadSymbol(libHandle, "webview_destroy")
-		pRun = loadSymbol(libHandle, "webview_run")
-		pTerminate = loadSymbol(libHandle, "webview_terminate")
-		pDispatch = loadSymbol(libHandle, "webview_dispatch")
-		pGetWindow = loadSymbol(libHandle, "webview_get_window")
-		pSetTitle = loadSymbol(libHandle, "webview_set_title")
-		pSetSize = loadSymbol(libHandle, "webview_set_size")
-		pNavigate = loadSymbol(libHandle, "webview_navigate")
-		pSetHtml = loadSymbol(libHandle, "webview_set_html")
-		pInit = loadSymbol(libHandle, "webview_init")
-		pEval = loadSymbol(libHandle, "webview_eval")
-		pBind = loadSymbol(libHandle, "webview_bind")
-		pUnbind = loadSymbol(libHandle, "webview_unbind")
-		pReturn = loadSymbol(libHandle, "webview_return")
+		// Resolve all required symbols from the library.
+		symbols := []struct {
+			ptr  *uintptr
+			name string
+		}{
+			{&pCreate, "webview_create"},
+			{&pDestroy, "webview_destroy"},
+			{&pRun, "webview_run"},
+			{&pTerminate, "webview_terminate"},
+			{&pDispatch, "webview_dispatch"},
+			{&pGetWindow, "webview_get_window"},
+			{&pSetTitle, "webview_set_title"},
+			{&pSetSize, "webview_set_size"},
+			{&pNavigate, "webview_navigate"},
+			{&pSetHtml, "webview_set_html"},
+			{&pInit, "webview_init"},
+			{&pEval, "webview_eval"},
+			{&pBind, "webview_bind"},
+			{&pUnbind, "webview_unbind"},
+			{&pReturn, "webview_return"},
+		}
+		for _, s := range symbols {
+			ptr, err := loadSymbol(libHandle, s.name)
+			if err != nil {
+				loadErr = err
+				return
+			}
+			*s.ptr = ptr
+		}
 		dispatchCallback = purego.NewCallback(dispatchCallbackFn)
 		bindingCallback = purego.NewCallback(bindingCallbackFn)
 	})
+	if loadErr != nil {
+		return nil, loadErr
+	}
 	r1, _, _ := purego.SyscallN(pCreate, boolToInt(debug), uintptr(window))
 	if r1 == 0 {
-		panic("webview: failed to create window")
+		return nil, errors.New("webview: failed to create window")
 	}
-	return &webview{handle: r1}
+	return &webview{handle: r1}, nil
 }
 
 // webview is a concrete implementation of WebView using native library calls.
@@ -406,35 +428,9 @@ func bindingCallbackFn(idPtr, reqPtr, arg uintptr) uintptr {
 	req := goString(reqPtr)
 
 	go func() {
-		resultValue, err := entry.fn(id, req)
-		status := 0
-		var resultJSON string
-		if err != nil { //nolint:nestif
-			status = -1
-			errMsg := err.Error()
-			// Attempt to JSON-encode the error message
-			if data, e := json.Marshal(errMsg); e == nil {
-				resultJSON = string(data)
-			} else {
-				resultJSON = "\"" + errMsg + "\""
-			}
-		} else {
-			// Attempt to JSON-encode the result value
-			if data, e := json.Marshal(resultValue); e == nil {
-				resultJSON = string(data)
-			} else {
-				status = -1
-				msg := e.Error()
-				// Fallback JSON-encode for the error
-				if data2, e2 := json.Marshal(msg); e2 == nil {
-					resultJSON = string(data2)
-				} else {
-					resultJSON = "\"" + msg + "\""
-				}
-			}
-		}
+		status, resultJSON := callAndMarshal(entry.fn, id, req)
 
-		// Create new C string for the ID as the original one is no longer valid.
+		// Create new C strings as the original pointers are no longer valid.
 		idBytes, newIDPtr := cString(id)
 		resBytes, newResPtr := cString(resultJSON)
 		purego.SyscallN(pReturn, entry.w, newIDPtr, uintptr(status), newResPtr)
@@ -443,6 +439,31 @@ func bindingCallbackFn(idPtr, reqPtr, arg uintptr) uintptr {
 	}()
 
 	return 0
+}
+
+// callAndMarshal executes a bound function and marshals the result to JSON.
+// Returns the status code (0 for success, -1 for error) and the JSON string.
+func callAndMarshal(fn func(id, req string) (any, error), id, req string) (int, string) {
+	resultValue, err := fn(id, req)
+	if err != nil {
+		return -1, marshalOrFallback(err.Error())
+	}
+
+	data, e := json.Marshal(resultValue)
+	if e != nil {
+		return -1, marshalOrFallback(e.Error())
+	}
+	return 0, string(data)
+}
+
+// marshalOrFallback attempts to JSON-encode a string message.
+// If marshaling fails, it wraps the message in escaped quotes as a fallback.
+func marshalOrFallback(msg string) string {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return "\"" + msg + "\""
+	}
+	return string(data)
 }
 
 func boolToInt(b bool) uintptr {

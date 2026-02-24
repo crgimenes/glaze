@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"time"
 
 	"github.com/crgimenes/go-webview"
@@ -39,19 +40,23 @@ const html = `
 func main() {
 	var count int64
 
-	w := webview.New(true)
+	w, err := webview.New(true)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer w.Destroy()
+
 	w.SetTitle("Bind Example")
 	w.SetSize(480, 320, webview.HintNone)
 	w.SetHtml(html)
 
 	// Binding for count which immediately returns.
-	err := w.Bind("count", func(delta int64) int64 {
+	err = w.Bind("count", func(delta int64) int64 {
 		count += delta
 		return count
 	})
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	// Binding for compute which simulates a long computation.
@@ -60,7 +65,7 @@ func main() {
 		return a * b
 	})
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	w.Run()

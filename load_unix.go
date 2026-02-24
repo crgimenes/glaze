@@ -3,6 +3,7 @@
 package webview
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,10 +43,10 @@ func loadLibrary(name string) (uintptr, error) {
 	return purego.Dlopen(name, purego.RTLD_LAZY|purego.RTLD_GLOBAL)
 }
 
-func loadSymbol(lib uintptr, name string) uintptr {
+func loadSymbol(lib uintptr, name string) (uintptr, error) {
 	ptr, err := purego.Dlsym(lib, name)
 	if err != nil {
-		panic("webview: failed to load symbol " + name + ": " + err.Error())
+		return 0, fmt.Errorf("webview: failed to load symbol %s: %w", name, err)
 	}
-	return ptr
+	return ptr, nil
 }

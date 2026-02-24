@@ -9,7 +9,9 @@ import (
 	_ "github.com/crgimenes/go-webview/embedded"
 )
 
-// Needed to ensure that the tests run on the main thread.
+// init unlocks the OS thread that the webview package locks during its own
+// init(). Tests manage thread locking explicitly per test function.
+// This is a justified exception to the "no init() side effects" guideline.
 func init() {
 	runtime.UnlockOSThread()
 }
@@ -20,11 +22,15 @@ func TestWebview(t *testing.T) {
 
 	run := make(chan bool, 1)
 
-	w := webview.New(true)
+	w, err := webview.New(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	w.SetTitle("Hello")
 	w.SetSize(800, 600, webview.HintNone)
 
-	err := w.Bind("run", func(b bool) {
+	err = w.Bind("run", func(b bool) {
 		run <- b
 		w.Terminate()
 	})
