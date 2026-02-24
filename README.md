@@ -89,9 +89,26 @@ html, err := webview.RenderHTML(tpl, "main", data)
 w.SetHtml(html)
 ```
 
+### AppWindow
+
+`AppWindow` wraps an `http.Handler` in a native window with a local loopback server. This is the easiest way to turn a web application (e.g. a devengine app) into a desktop app:
+
+```go
+err := webview.AppWindow(webview.AppOptions{
+    Title:   "My App",
+    Width:   1280,
+    Height:  800,
+    Debug:   true,
+    Handler: mux, // your http.ServeMux
+    OnReady: func(addr string) { fmt.Println("Serving on", addr) },
+})
+```
+
+The server starts on a random port, the window opens, and when the user closes it the server shuts down automatically.
+
 ### Local-First Desktop Pattern
 
-For local desktop apps, you can expose Go services directly to JavaScript via `Bind` — no HTTP server, session, or auth needed:
+For local desktop apps without an HTTP server, expose Go services directly to JavaScript via `Bind`:
 
 ```go
 store := &MyStore{}
@@ -101,7 +118,7 @@ w.SetHtml(myHTML)
 w.Run()
 ```
 
-See [./examples/desktop](./examples/desktop) for a complete working example.
+See [./examples/desktop](./examples/desktop) and [./examples/filorepl](./examples/filorepl) for complete working examples.
 
 ## Acknowledgements
 

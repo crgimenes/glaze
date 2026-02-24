@@ -28,9 +28,7 @@ func BindMethods(w WebView, prefix string, obj any) ([]string, error) {
 			continue
 		}
 
-		// Skip methods that don't look like user-facing APIs.
-		// Methods whose first letter after export check is lowercase
-		// are already filtered by IsExported.
+		// Build the JS function name: {prefix}_{snake_case_method}.
 		name := prefix + "_" + camelToSnake(method.Name)
 
 		fn := v.Method(i).Interface()

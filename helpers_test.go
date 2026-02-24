@@ -23,6 +23,12 @@ func TestCamelToSnake(t *testing.T) {
 		{"Close", "close"},
 		{"Exec", "exec"},
 		{"BeginTransaction", "begin_transaction"},
+		{"", ""},
+		{"ABC", "abc"},
+		{"ABCDef", "abc_def"},
+		{"XMLHTTPRequest", "xmlhttp_request"},
+		{"a", "a"},
+		{"aB", "a_b"},
 	}
 
 	for _, tt := range tests {
@@ -50,11 +56,42 @@ func TestRenderHTML(t *testing.T) {
 	}
 }
 
+func TestRenderHTMLNested(t *testing.T) {
+	tpl := template.Must(template.New("").Parse(
+		`{{define "header"}}<h1>{{.Title}}</h1>{{end}}` +
+			`{{define "page"}}{{template "header" .}}<p>body</p>{{end}}`,
+	))
+
+	got, err := RenderHTML(tpl, "page", struct{ Title string }{"Test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<h1>Test</h1><p>body</p>"
+	if got != want {
+		t.Errorf("RenderHTML nested = %q, want %q", got, want)
+	}
+}
+
 func TestRenderHTMLMissingTemplate(t *testing.T) {
 	tpl := template.Must(template.New("test").Parse(`{{define "a"}}ok{{end}}`))
 
 	_, err := RenderHTML(tpl, "missing", nil)
 	if err == nil {
 		t.Fatal("expected error for missing template")
+	}
+}
+
+func TestRenderHTMLNilData(t *testing.T) {
+	tpl := template.Must(template.New("").Parse(
+		`{{define "static"}}no data needed{{end}}`,
+	))
+
+	got, err := RenderHTML(tpl, "static", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "no data needed"
+	if got != want {
+		t.Errorf("RenderHTML nil data = %q, want %q", got, want)
 	}
 }
