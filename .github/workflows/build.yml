@@ -54,20 +54,24 @@ jobs:
             arch: amd64
             runs-on: ubuntu-latest
             file: libwebview.so
+            generator: Ninja
           - os: linux
             arch: arm64
             runs-on: ubuntu-24.04-arm
             file: libwebview.so
+            generator: Ninja
           - os: darwin
             arch: amd64
-            runs-on: macos-latest
+            runs-on: macos-13
             file: libwebview.dylib
             args: -D CMAKE_OSX_ARCHITECTURES=x86_64
+            generator: Ninja
           - os: darwin
             arch: arm64
-            runs-on: macos-latest
+            runs-on: macos-14
             file: libwebview.dylib
             args: -D CMAKE_OSX_ARCHITECTURES=arm64
+            generator: Ninja
           - os: windows
             arch: amd64
             runs-on: windows-latest
@@ -92,7 +96,16 @@ jobs:
 
       - name: Configure and Build
         run: |
-          cmake -B build -S . -D CMAKE_BUILD_TYPE=Release ${{ matrix.job.args }} \
+          gen_args=()
+          if [ -n "${{ matrix.job.generator }}" ]; then
+            if command -v ninja >/dev/null 2>&1; then
+              gen_args=(-G "${{ matrix.job.generator }}")
+            else
+              echo "ninja not found on runner, using default cmake generator"
+            fi
+          fi
+
+          cmake "${gen_args[@]}" -B build -S . -D CMAKE_BUILD_TYPE=Release ${{ matrix.job.args }} \
             -D WEBVIEW_BUILD_SHARED_LIBRARY=ON \
             -D WEBVIEW_BUILD_STATIC_LIBRARY=OFF \
             -D WEBVIEW_BUILD_TESTS=OFF \
@@ -104,8 +117,26 @@ jobs:
 
       - name: Rename artifact
         run: |
+          artifact_name=$(basename "${{ matrix.job.file }}")
+          src=""
+
+          if [ -f "build/core/${{ matrix.job.file }}" ]; then
+            src="build/core/${{ matrix.job.file }}"
+          fi
+
+          if [ -z "$src" ]; then
+            src=$(find build -type f \( -path "*/${{ matrix.job.file }}" -o -name "$artifact_name" \) | head -n1 || true)
+          fi
+
+          if [ -z "$src" ]; then
+            echo "failed to find built artifact for ${{ matrix.job.os }}_${{ matrix.job.arch }} (${{ matrix.job.file }})" >&2
+            echo "files found under build/:" >&2
+            find build -type f | sort >&2
+            exit 1
+          fi
+
           mkdir -p ${{ matrix.job.os }}_${{ matrix.job.arch }}
-          cp build/core/${{ matrix.job.file }} ${{ matrix.job.os }}_${{ matrix.job.arch }}/
+          cp "$src" ${{ matrix.job.os }}_${{ matrix.job.arch }}/"$artifact_name"
 
       - uses: actions/upload-artifact@v4
         with:
