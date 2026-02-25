@@ -115,12 +115,7 @@ jobs:
             clang_format_exe="$(command -v clang-format-18)"
           else
             clang_format_exe="$RUNNER_TEMP/clang-format-noop"
-            cat > "$clang_format_exe" <<'EOF'
-#!/usr/bin/env bash
-# No-op fallback for environments without clang-format.
-# Accepts the same CLI shape used by webview amalgamation script.
-exit 0
-EOF
+            printf '%s\n' '#!/usr/bin/env bash' '# No-op fallback for environments without clang-format.' 'exit 0' > "$clang_format_exe"
             chmod +x "$clang_format_exe"
           fi
           echo "Using WEBVIEW_CLANG_FORMAT_EXE=$clang_format_exe"
