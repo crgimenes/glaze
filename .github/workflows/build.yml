@@ -13,20 +13,30 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.check.outputs.tag }}
+      ref: ${{ steps.check.outputs.ref }}
+      version: ${{ steps.check.outputs.version }}
       skip: ${{ steps.check.outputs.skip }}
     steps:
       - name: Checkout current repo
         uses: actions/checkout@v4
 
-      - name: Check if tag already built
+      - name: Resolve latest master commit and check if already built
         id: check
         run: |
-          tag=$(curl -s https://api.github.com/repos/webview/webview/tags | jq -r '.[0].name')
-          echo "tag=$tag" >> $GITHUB_OUTPUT
+          ref=$(curl -s https://api.github.com/repos/webview/webview/commits/master | jq -r '.sha')
+          if [ -z "$ref" ] || [ "$ref" = "null" ]; then
+            echo "failed to resolve webview/webview master commit SHA" >&2
+            exit 1
+          fi
 
-          if [ -f embedded/VERSION.txt ] && grep -q "$tag" embedded/VERSION.txt; then
-            echo "Already built version $tag"
+          short_ref="${ref:0:12}"
+          version="master-${short_ref}"
+
+          echo "ref=$ref" >> $GITHUB_OUTPUT
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+          if [ -f embedded/VERSION.txt ] && grep -Fxq "$version" embedded/VERSION.txt; then
+            echo "already built version $version"
             echo "skip=true" >> $GITHUB_OUTPUT
           else
             echo "skip=false" >> $GITHUB_OUTPUT
@@ -72,7 +82,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: webview/webview
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.ref }}
 
       - name: Install dependencies
         if: matrix.job.os == 'linux'
@@ -119,13 +129,16 @@ jobs:
           path: embedded
 
       - name: Create version file
-        run: echo -n "${{ needs.prepare.outputs.tag }}" > embedded/VERSION.txt
+        run: echo -n "${{ needs.prepare.outputs.version }}" > embedded/VERSION.txt
 
       - name: Commit and create PR
         uses: peter-evans/create-pull-request@v7
         with:
           branch: update-webview
           sign-commits: true
-          commit-message: 'feat: update webview to ${{ needs.prepare.outputs.tag }}'
-          title: 'feat: update webview to ${{ needs.prepare.outputs.tag }}'
-          body: This PR updates the embedded WebView native libraries to version ${{ needs.prepare.outputs.tag }}.
+          commit-message: 'feat: update webview to ${{ needs.prepare.outputs.version }}'
+          title: 'feat: update webview to ${{ needs.prepare.outputs.version }}'
+          body: |
+            This PR updates embedded WebView native libraries to `${{ needs.prepare.outputs.version }}`.
+
+            Upstream commit: https://github.com/webview/webview/commit/${{ needs.prepare.outputs.ref }}
