@@ -48,6 +48,7 @@ jobs:
     if: needs.prepare.outputs.skip != 'true'
     runs-on: ${{ matrix.job.runs-on }}
     strategy:
+      fail-fast: false
       matrix:
         job:
           - os: linux
@@ -62,13 +63,13 @@ jobs:
             generator: Ninja
           - os: darwin
             arch: amd64
-            runs-on: macos-13
+            runs-on: macos-latest
             file: libwebview.dylib
             args: -D CMAKE_OSX_ARCHITECTURES=x86_64
             generator: Ninja
           - os: darwin
             arch: arm64
-            runs-on: macos-14
+            runs-on: macos-latest
             file: libwebview.dylib
             args: -D CMAKE_OSX_ARCHITECTURES=arm64
             generator: Ninja
@@ -105,6 +106,16 @@ jobs:
             fi
           fi
 
+          clang_format_exe=""
+          if command -v clang-format >/dev/null 2>&1; then
+            clang_format_exe="$(command -v clang-format)"
+          elif command -v clang-format-18 >/dev/null 2>&1; then
+            clang_format_exe="$(command -v clang-format-18)"
+          else
+            clang_format_exe="$(command -v cmake)"
+          fi
+          echo "Using WEBVIEW_CLANG_FORMAT_EXE=$clang_format_exe"
+
           cmake "${gen_args[@]}" -B build -S . -D CMAKE_BUILD_TYPE=Release ${{ matrix.job.args }} \
             -D WEBVIEW_BUILD_SHARED_LIBRARY=ON \
             -D WEBVIEW_BUILD_STATIC_LIBRARY=OFF \
@@ -112,7 +123,8 @@ jobs:
             -D WEBVIEW_BUILD_EXAMPLES=OFF \
             -D WEBVIEW_BUILD_DOCS=OFF \
             -D WEBVIEW_ENABLE_PACKAGING=OFF \
-            -D WEBVIEW_ENABLE_CHECKS=OFF
+            -D WEBVIEW_ENABLE_CHECKS=OFF \
+            -D WEBVIEW_CLANG_FORMAT_EXE="$clang_format_exe"
           cmake --build build --config Release
 
       - name: Rename artifact
