@@ -12,14 +12,6 @@ import (
 	"github.com/ebitengine/purego"
 )
 
-// init locks the OS thread to ensure all UI calls happen on the main thread.
-// This is required by Cocoa (macOS) and GTK (Linux) which mandate that GUI
-// operations run on the main thread. This is a justified exception to the
-// "no init() side effects" guideline (AGENTS.md §4.3).
-func init() {
-	runtime.LockOSThread()
-}
-
 // Hints are used to configure window sizing and resizing.
 type Hint int
 
@@ -101,17 +93,12 @@ type WebView interface {
 	Unbind(name string) error
 }
 
-// New calls NewWindow to create a new window and a new webview instance. If debug
-// is non-zero - developer tools will be enabled (if the platform supports them).
-func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
-
-// NewWindow creates a new webview instance. If debug is non-zero - developer
-// tools will be enabled (if the platform supports them). Window parameter can be
-// a pointer to the native window handle. If it's non-null - then child WebView is
-// embedded into the given parent window. Otherwise a new window is created.
-// Depending on the platform, a GtkWindow, NSWindow or HWND pointer can be passed
-// here.
-func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
+// Init prepares the glaze runtime: loads the native webview library and
+// resolves all required symbols. It is safe to call multiple times; only
+// the first call has effect. New and NewWindow call Init automatically,
+// but callers may invoke it earlier to fail fast (e.g. verify that the
+// native library is available before building the rest of the UI).
+func Init() error {
 	loadOnce.Do(func() {
 		libHandle, err := loadLibrary(libraryPath())
 		if err != nil {
@@ -154,8 +141,22 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 		dispatchCallback = purego.NewCallback(dispatchCallbackFn)
 		bindingCallback = purego.NewCallback(bindingCallbackFn)
 	})
-	if loadInitErr != nil {
-		return nil, loadInitErr
+	return loadInitErr
+}
+
+// New calls NewWindow to create a new window and a new webview instance. If debug
+// is non-zero - developer tools will be enabled (if the platform supports them).
+func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
+
+// NewWindow creates a new webview instance. If debug is non-zero - developer
+// tools will be enabled (if the platform supports them). Window parameter can be
+// a pointer to the native window handle. If it's non-null - then child WebView is
+// embedded into the given parent window. Otherwise a new window is created.
+// Depending on the platform, a GtkWindow, NSWindow or HWND pointer can be passed
+// here.
+func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
+	if err := Init(); err != nil {
+		return nil, err
 	}
 	if pCreate == 0 {
 		return nil, errors.New("webview: native symbols are not initialized")

@@ -11,13 +11,6 @@ import (
 	_ "github.com/crgimenes/glaze/embedded"
 )
 
-// init unlocks the OS thread that the webview package locks during its own
-// init(). Tests manage thread locking explicitly per test function.
-// This is a justified exception to the "no init() side effects" guideline.
-func init() {
-	runtime.UnlockOSThread()
-}
-
 func TestWebview(t *testing.T) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
