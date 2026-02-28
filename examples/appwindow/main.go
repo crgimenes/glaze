@@ -36,11 +36,8 @@ type todoItem struct {
 	Done bool
 }
 
-// store is a simple in-memory TODO list (in a real app, use devengine/db).
-var (
-	store  []todoItem
-	nextID = 1
-)
+// store and nextID are declared in main() instead of at package level
+// to avoid global mutable state.
 
 // templates uses devengine's Bootstrap CSS/JS by referencing /assets/... paths,
 // exactly like the partials in devengine/templates/partials/head.go.tmpl.
@@ -161,8 +158,8 @@ func render(w http.ResponseWriter, items []todoItem) {
 	}
 }
 
-func findByID(id int) int {
-	for i, item := range store {
+func findByID(items []todoItem, id int) int {
+	for i, item := range items {
 		if item.ID == id {
 			return i
 		}
@@ -171,6 +168,9 @@ func findByID(id int) int {
 }
 
 func main() {
+	var store []todoItem
+	nextID := 1
+
 	mux := http.NewServeMux()
 
 	// Serve devengine's embedded static assets (Bootstrap CSS/JS, style.css).
@@ -199,7 +199,7 @@ func main() {
 	mux.HandleFunc("POST /toggle", func(w http.ResponseWriter, r *http.Request) {
 		var id int
 		fmt.Sscanf(r.FormValue("id"), "%d", &id)
-		if i := findByID(id); i >= 0 {
+		if i := findByID(store, id); i >= 0 {
 			store[i].Done = !store[i].Done
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -209,7 +209,7 @@ func main() {
 	mux.HandleFunc("POST /delete", func(w http.ResponseWriter, r *http.Request) {
 		var id int
 		fmt.Sscanf(r.FormValue("id"), "%d", &id)
-		if i := findByID(id); i >= 0 {
+		if i := findByID(store, id); i >= 0 {
 			store = append(store[:i], store[i+1:]...)
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)

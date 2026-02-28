@@ -6,39 +6,53 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 )
 
 //go:embed VERSION.txt
 var version string
 
-// init extracts the embedded native library to a temporary directory and sets
-// the environment so the webview package can find it at runtime. This is a
-// justified exception to the "no init() side effects" guideline (AGENTS.md §4.3)
-// because it is the core mechanism behind "import _ embedded" convenience.
-func init() {
-	dir := filepath.Join(os.TempDir(), "webview-"+version)
-	file := filepath.Join(dir, name)
+var extractOnce sync.Once
+var extractErr error
 
-	if _, err := os.Stat(file); err != nil {
-		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-			fmt.Fprintf(os.Stderr, "webview/embedded: failed to create directory %s: %v\n", dir, err)
-			os.Exit(1)
-		}
-		if err := os.WriteFile(file, lib, os.ModePerm); err != nil { //nolint:gosec
-			fmt.Fprintf(os.Stderr, "webview/embedded: failed to write library %s: %v\n", file, err)
-			os.Exit(1)
-		}
-	}
+// Extract writes the embedded native library to a temporary directory and sets
+// the environment so the glaze package can find it at runtime. It is safe to
+// call multiple times; only the first call has effect. Returns an error instead
+// of calling os.Exit so the caller can handle failures gracefully.
+func Extract() error {
+	extractOnce.Do(func() {
+		dir := filepath.Join(os.TempDir(), "webview-"+version)
+		file := filepath.Join(dir, name)
 
-	if runtime.GOOS == "windows" {
-		if err := os.Setenv("PATH", dir+";"+os.Getenv("PATH")); err != nil {
-			fmt.Fprintf(os.Stderr, "webview/embedded: failed to set PATH: %v\n", err)
-			os.Exit(1)
+		if _, err := os.Stat(file); err != nil {
+			if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+				extractErr = fmt.Errorf("webview/embedded: failed to create directory %s: %w", dir, err)
+				return
+			}
+			if err := os.WriteFile(file, lib, os.ModePerm); err != nil { //nolint:gosec
+				extractErr = fmt.Errorf("webview/embedded: failed to write library %s: %w", file, err)
+				return
+			}
 		}
-	} else {
+
+		if runtime.GOOS == "windows" {
+			if err := os.Setenv("PATH", dir+";"+os.Getenv("PATH")); err != nil {
+				extractErr = fmt.Errorf("webview/embedded: failed to set PATH: %w", err)
+			}
+			return
+		}
 		if err := os.Setenv("WEBVIEW_PATH", dir); err != nil {
-			fmt.Fprintf(os.Stderr, "webview/embedded: failed to set WEBVIEW_PATH: %v\n", err)
-			os.Exit(1)
+			extractErr = fmt.Errorf("webview/embedded: failed to set WEBVIEW_PATH: %w", err)
 		}
+	})
+	return extractErr
+}
+
+// init calls Extract for backward compatibility with the "import _ embedded"
+// pattern. New code should call Extract() explicitly before glaze.Init().
+func init() {
+	if err := Extract(); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
 	}
 }
