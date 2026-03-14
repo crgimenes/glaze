@@ -2,11 +2,15 @@ package embedded
 
 import (
 	_ "embed"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
+
+	"golang.org/x/crypto/blake2b"
 )
 
 //go:embed VERSION.txt
@@ -14,23 +18,83 @@ var version string
 
 var extractOnce sync.Once
 var extractErr error
+var extractDir string
 
-// Extract writes the embedded native library to a temporary directory and sets
-// the environment so the glaze package can find it at runtime. It is safe to
-// call multiple times; only the first call has effect. Returns an error instead
-// of calling os.Exit so the caller can handle failures gracefully.
-func Extract() error {
+// computeHash returns the hex-encoded BLAKE2b-256 digest of data.
+func computeHash(data []byte) string {
+	h, _ := blake2b.New256(nil) // nil key never errors
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// fileHash returns the hex-encoded BLAKE2b-256 digest of the file at path.
+func fileHash(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h, _ := blake2b.New256(nil)
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ExtractTo writes the embedded native library to dir and sets the environment
+// so the glaze package can find it at runtime. If dir is empty the default
+// temporary directory is used ($TMPDIR/webview-<version>).
+//
+// The extracted file is verified against a BLAKE2b-256 hash computed from the
+// embedded bytes. If a file already exists at the destination and its hash does
+// not match, an error is returned without modifying the file.
+//
+// ExtractTo is safe to call multiple times; only the first call has effect.
+func ExtractTo(dir string) error {
 	extractOnce.Do(func() {
-		dir := filepath.Join(os.TempDir(), "webview-"+version)
+		if dir == "" {
+			dir = filepath.Join(os.TempDir(), "webview-"+version)
+		}
+		extractDir = dir
 		file := filepath.Join(dir, name)
 
-		if _, err := os.Stat(file); err != nil {
-			if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+		expectedHash := computeHash(lib)
+
+		if _, err := os.Stat(file); err == nil {
+			// File already exists — verify its integrity.
+			actual, err := fileHash(file)
+			if err != nil {
+				extractErr = fmt.Errorf("webview/embedded: failed to hash existing library %s: %w", file, err)
+				return
+			}
+			if actual != expectedHash {
+				extractErr = fmt.Errorf(
+					"webview/embedded: library integrity check failed for %s: expected %s, got %s",
+					file, expectedHash, actual,
+				)
+				return
+			}
+		} else {
+			// File does not exist — extract and verify.
+			if err := os.MkdirAll(dir, 0o700); err != nil {
 				extractErr = fmt.Errorf("webview/embedded: failed to create directory %s: %w", dir, err)
 				return
 			}
-			if err := os.WriteFile(file, lib, os.ModePerm); err != nil { //nolint:gosec
+			if err := os.WriteFile(file, lib, 0o500); err != nil {
 				extractErr = fmt.Errorf("webview/embedded: failed to write library %s: %w", file, err)
+				return
+			}
+			// Verify the written file to catch I/O or filesystem issues.
+			actual, err := fileHash(file)
+			if err != nil {
+				extractErr = fmt.Errorf("webview/embedded: failed to verify written library %s: %w", file, err)
+				return
+			}
+			if actual != expectedHash {
+				extractErr = fmt.Errorf(
+					"webview/embedded: post-write integrity check failed for %s: expected %s, got %s",
+					file, expectedHash, actual,
+				)
 				return
 			}
 		}
@@ -48,8 +112,18 @@ func Extract() error {
 	return extractErr
 }
 
+// Extract writes the embedded native library to the default temporary directory
+// and sets the environment so the glaze package can find it at runtime. It is
+// safe to call multiple times; only the first call has effect.
+//
+// For production deployments, prefer ExtractTo with a directory that is not
+// world-writable (e.g. alongside the application binary).
+func Extract() error {
+	return ExtractTo("")
+}
+
 // init calls Extract for backward compatibility with the "import _ embedded"
-// pattern. New code should call Extract() explicitly before glaze.Init().
+// pattern. New code should call ExtractTo() explicitly before glaze.Init().
 func init() {
 	if err := Extract(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)

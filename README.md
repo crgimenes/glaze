@@ -43,23 +43,23 @@ import _ "github.com/crgimenes/glaze/embedded"
 package main
 
 import (
-	"log"
+ "log"
 
-	"github.com/crgimenes/glaze"
-	_ "github.com/crgimenes/glaze/embedded"
+ "github.com/crgimenes/glaze"
+ _ "github.com/crgimenes/glaze/embedded"
 )
 
 func main() {
-	w, err := glaze.New(true)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer w.Destroy()
+ w, err := glaze.New(true)
+ if err != nil {
+  log.Fatal(err)
+ }
+ defer w.Destroy()
 
-	w.SetTitle("Glaze")
-	w.SetSize(800, 600, glaze.HintNone)
-	w.SetHtml("<h1>Hello from Glaze</h1>")
-	w.Run()
+ w.SetTitle("Glaze")
+ w.SetSize(800, 600, glaze.HintNone)
+ w.SetHtml("<h1>Hello from Glaze</h1>")
+ w.Run()
 }
 ```
 
@@ -109,7 +109,7 @@ app without running an HTTP server for that page.
 ```go
 html, err := glaze.RenderHTML(tpl, "page", data)
 if err != nil {
-	return err
+ return err
 }
 w.SetHtml(html)
 ```
@@ -140,14 +140,14 @@ desktop app with minimal changes to your routing, templates, and assets.
 
 ```go
 err := glaze.AppWindow(glaze.AppOptions{
-	Title:     "My App",
-	Width:     1280,
-	Height:    800,
-	Transport: glaze.AppTransportAuto,
-	Handler:   mux,
-	OnReadyInfo: func(info glaze.AppReadyInfo) {
-		log.Printf("transport=%s backend=%s gateway=%s", info.Transport, info.Backend, info.Gateway)
-	},
+ Title:     "My App",
+ Width:     1280,
+ Height:    800,
+ Transport: glaze.AppTransportAuto,
+ Handler:   mux,
+ OnReadyInfo: func(info glaze.AppReadyInfo) {
+  log.Printf("transport=%s backend=%s gateway=%s", info.Transport, info.Backend, info.Gateway)
+ },
 })
 ```
 
@@ -201,6 +201,58 @@ go build -ldflags="-H windowsgui" .
 - `helpers.go` - utility helpers (`BindMethods`, `RenderHTML`)
 - `embedded/` - embedded native library assets per platform
 - `examples/` - runnable sample applications
+
+## Security: Library Integrity Verification
+
+Glaze embeds native libraries and extracts them to disk before loading. By
+default, the extraction target is a temporary directory that may be writable by
+other processes, which could allow an attacker to replace the library file.
+
+To mitigate this, Glaze computes a BLAKE2b-256 hash of the embedded library
+bytes at runtime and verifies every extracted (or pre-existing) file against
+that hash before loading. If the hash does not match, extraction fails with an
+integrity error and the library is **not** loaded.
+
+Additionally, extracted files are created with restricted permissions (`0500`
+owner read+execute) inside a directory with `0700` permissions.
+
+### Custom Library Directory
+
+For production deployments, use `ExtractTo` to place the library in a secure,
+application-controlled directory instead of the system temp directory:
+
+```go
+package main
+
+import (
+ "log"
+
+ "github.com/crgimenes/glaze"
+ "github.com/crgimenes/glaze/embedded"
+)
+
+func main() {
+ // Extract to a directory with restricted access.
+ if err := embedded.ExtractTo("/opt/myapp/lib"); err != nil {
+  log.Fatal(err)
+ }
+
+ w, err := glaze.New(true)
+ if err != nil {
+  log.Fatal(err)
+ }
+ defer w.Destroy()
+
+ w.SetTitle("Secure App")
+ w.SetSize(800, 600, glaze.HintNone)
+ w.SetHtml("<h1>Hello</h1>")
+ w.Run()
+}
+```
+
+When using `ExtractTo`, do **not** use `import _ "github.com/crgimenes/glaze/embedded"` — that
+blank import triggers `init()` which extracts to the default temp directory.
+Call `ExtractTo` explicitly instead.
 
 ## Acknowledgments
 
