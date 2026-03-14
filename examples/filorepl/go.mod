@@ -8,4 +8,8 @@ require (
 	github.com/crgimenes/glaze v0.0.12
 )
 
-require github.com/ebitengine/purego v0.10.0 // indirect
+require (
+	github.com/ebitengine/purego v0.10.0 // indirect
+	golang.org/x/crypto v0.49.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
+)
