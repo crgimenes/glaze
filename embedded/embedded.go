@@ -64,22 +64,9 @@ func ExtractTo(dir string) error {
 		extractDir = dir
 		file := filepath.Join(dir, name)
 
-		if _, err := os.Stat(file); err == nil {
-			// File already exists — verify its integrity.
-			actual, err := fileHash(file)
-			if err != nil {
-				extractErr = fmt.Errorf("webview/embedded: failed to hash existing library %s: %w", file, err)
-				return
-			}
-			if actual != expectedLibHash {
-				extractErr = fmt.Errorf(
-					"webview/embedded: library integrity check failed for %s: expected %s, got %s",
-					file, expectedLibHash, actual,
-				)
-				return
-			}
-		} else {
-			// File does not exist — extract and verify.
+		// If the file does not exist, extract it.
+		_, statErr := os.Stat(file)
+		if statErr != nil {
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				extractErr = fmt.Errorf("webview/embedded: failed to create directory %s: %w", dir, err)
 				return
@@ -88,19 +75,20 @@ func ExtractTo(dir string) error {
 				extractErr = fmt.Errorf("webview/embedded: failed to write library %s: %w", file, err)
 				return
 			}
-			// Verify the written file to catch I/O or filesystem issues.
-			actual, err := fileHash(file)
-			if err != nil {
-				extractErr = fmt.Errorf("webview/embedded: failed to verify written library %s: %w", file, err)
-				return
-			}
-			if actual != expectedLibHash {
-				extractErr = fmt.Errorf(
-					"webview/embedded: post-write integrity check failed for %s: expected %s, got %s",
-					file, expectedLibHash, actual,
-				)
-				return
-			}
+		}
+
+		// Verify the file on disk — whether pre-existing or just extracted.
+		actual, err := fileHash(file)
+		if err != nil {
+			extractErr = fmt.Errorf("webview/embedded: failed to hash library %s: %w", file, err)
+			return
+		}
+		if actual != expectedLibHash {
+			extractErr = fmt.Errorf(
+				"webview/embedded: library integrity check failed for %s: expected %s, got %s",
+				file, expectedLibHash, actual,
+			)
+			return
 		}
 
 		// Set WEBVIEW_PATH on all platforms so that libraryPath() in the

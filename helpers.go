@@ -62,23 +62,23 @@ func camelToSnake(s string) string {
 
 	runes := []rune(s)
 	for i, r := range runes {
-		if unicode.IsUpper(r) {
-			// Insert underscore before uppercase runs, but not at the start.
-			if i > 0 {
-				prev := runes[i-1]
-				// Don't insert underscore between consecutive uppercase
-				// unless the next char is lowercase (e.g., "ID" stays together
-				// but "IDa" → "i_da" boundary).
-				if unicode.IsLower(prev) {
-					b.WriteRune('_')
-				} else if i+1 < len(runes) && unicode.IsLower(runes[i+1]) {
-					b.WriteRune('_')
-				}
-			}
-			b.WriteRune(unicode.ToLower(r))
-		} else {
+		if !unicode.IsUpper(r) {
 			b.WriteRune(r)
+			continue
 		}
+		// Insert underscore before uppercase runs, but not at the start.
+		if i > 0 {
+			prev := runes[i-1]
+			// Don't insert underscore between consecutive uppercase
+			// unless the next char is lowercase (e.g., "ID" stays together
+			// but "IDa" → "i_da" boundary).
+			if unicode.IsLower(prev) {
+				b.WriteRune('_')
+			} else if i+1 < len(runes) && unicode.IsLower(runes[i+1]) {
+				b.WriteRune('_')
+			}
+		}
+		b.WriteRune(unicode.ToLower(r))
 	}
 	return b.String()
 }

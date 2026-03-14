@@ -3,8 +3,8 @@ module github.com/crgimenes/glaze/examples/desktop
 go 1.26
 
 require (
-	github.com/crgimenes/devengine v0.0.6
-	github.com/crgimenes/glaze v0.0.8
+	github.com/crgimenes/devengine v0.0.7
+	github.com/crgimenes/glaze v0.0.12
 )
 
 require (
