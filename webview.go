@@ -264,6 +264,12 @@ var (
 	defaultRT *glazeRuntime
 )
 
+// VerifyBeforeLoad, when non-nil, is called with the resolved library path
+// immediately before the native library is opened via dlopen/LoadLibrary.
+// The embedded package sets this to a BLAKE2b-256 integrity check so that
+// libraries replaced on disk after extraction are detected before loading.
+var VerifyBeforeLoad func(path string) error
+
 func (w *webview) Run() {
 	purego.SyscallN(w.rt.pRun, w.handle)
 }
@@ -465,23 +471,19 @@ func makeFuncWrapper(f any) (func(id, req string) (any, error), error) {
 func callAndMarshal(fn func(id, req string) (any, error), id, req string) (int, string) {
 	resultValue, err := fn(id, req)
 	if err != nil {
-		return -1, marshalOrFallback(err.Error())
+		return -1, marshalJSON(err.Error())
 	}
 
 	data, e := json.Marshal(resultValue)
 	if e != nil {
-		return -1, marshalOrFallback(e.Error())
+		return -1, marshalJSON(e.Error())
 	}
 	return 0, string(data)
 }
 
-// marshalOrFallback attempts to JSON-encode a string message.
-// If marshaling fails, it wraps the message in escaped quotes as a fallback.
-func marshalOrFallback(msg string) string {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return "\"" + msg + "\""
-	}
+// marshalJSON JSON-encodes a string message for returning to JavaScript.
+func marshalJSON(msg string) string {
+	data, _ := json.Marshal(msg) // json.Marshal on string never fails
 	return string(data)
 }
 
@@ -497,6 +499,10 @@ func cString(s string) ([]byte, unsafe.Pointer) {
 	return b, unsafe.Pointer(&b[0])
 }
 
+// maxCStringLen is the upper bound for C string reads to prevent unbounded
+// memory scanning if the native library returns a non-null-terminated pointer.
+const maxCStringLen = 10 << 20 // 10 MiB
+
 func goString(c uintptr) string {
 	// We take the address and then dereference it to trick go vet from creating a possible misuse of unsafe.Pointer
 	ptr := *(*unsafe.Pointer)(unsafe.Pointer(&c))
@@ -504,7 +510,7 @@ func goString(c uintptr) string {
 		return ""
 	}
 	var length int
-	for {
+	for length < maxCStringLen {
 		if *(*byte)(unsafe.Add(ptr, uintptr(length))) == '\x00' {
 			break
 		}

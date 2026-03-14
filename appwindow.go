@@ -205,6 +205,21 @@ func setupTCPTransport(addr string) (appTransportSetup, error) {
 		addr = "127.0.0.1:0"
 	}
 
+	// Validate that the requested address resolves to loopback only.
+	// Desktop app HTTP handlers must not be exposed on external interfaces.
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return appTransportSetup{}, fmt.Errorf("webview: invalid listen address %q: %w", addr, err)
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && !ip.IsLoopback() {
+		return appTransportSetup{}, fmt.Errorf("webview: refusing to listen on non-loopback address %q; use 127.0.0.1 or [::1]", addr)
+	}
+	// Also reject wildcard addresses like "" or "0.0.0.0" or "::".
+	if ip == nil || ip.IsUnspecified() {
+		return appTransportSetup{}, fmt.Errorf("webview: refusing to listen on wildcard address %q; use 127.0.0.1 or [::1]", addr)
+	}
+
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return appTransportSetup{}, fmt.Errorf("webview: listen %s: %w", addr, err)

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/crgimenes/glaze"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -19,6 +20,11 @@ var version string
 var extractOnce sync.Once
 var extractErr error
 var extractDir string
+
+// expectedLibHash is the hex-encoded BLAKE2b-256 digest of the embedded
+// library bytes, computed once at package init time. Used both for on-disk
+// verification during extraction and for pre-load verification before dlopen.
+var expectedLibHash = computeHash(lib)
 
 // computeHash returns the hex-encoded BLAKE2b-256 digest of data.
 func computeHash(data []byte) string {
@@ -58,8 +64,6 @@ func ExtractTo(dir string) error {
 		extractDir = dir
 		file := filepath.Join(dir, name)
 
-		expectedHash := computeHash(lib)
-
 		if _, err := os.Stat(file); err == nil {
 			// File already exists — verify its integrity.
 			actual, err := fileHash(file)
@@ -67,10 +71,10 @@ func ExtractTo(dir string) error {
 				extractErr = fmt.Errorf("webview/embedded: failed to hash existing library %s: %w", file, err)
 				return
 			}
-			if actual != expectedHash {
+			if actual != expectedLibHash {
 				extractErr = fmt.Errorf(
 					"webview/embedded: library integrity check failed for %s: expected %s, got %s",
-					file, expectedHash, actual,
+					file, expectedLibHash, actual,
 				)
 				return
 			}
@@ -90,23 +94,27 @@ func ExtractTo(dir string) error {
 				extractErr = fmt.Errorf("webview/embedded: failed to verify written library %s: %w", file, err)
 				return
 			}
-			if actual != expectedHash {
+			if actual != expectedLibHash {
 				extractErr = fmt.Errorf(
 					"webview/embedded: post-write integrity check failed for %s: expected %s, got %s",
-					file, expectedHash, actual,
+					file, expectedLibHash, actual,
 				)
 				return
 			}
 		}
 
+		// Set WEBVIEW_PATH on all platforms so that libraryPath() in the
+		// glaze package resolves an absolute path for hash verification.
+		if err := os.Setenv("WEBVIEW_PATH", dir); err != nil {
+			extractErr = fmt.Errorf("webview/embedded: failed to set WEBVIEW_PATH: %w", err)
+			return
+		}
+		// On Windows also prepend PATH so that syscall.LoadLibrary fallback
+		// can find the DLL through the standard Windows search order.
 		if runtime.GOOS == "windows" {
 			if err := os.Setenv("PATH", dir+";"+os.Getenv("PATH")); err != nil {
 				extractErr = fmt.Errorf("webview/embedded: failed to set PATH: %w", err)
 			}
-			return
-		}
-		if err := os.Setenv("WEBVIEW_PATH", dir); err != nil {
-			extractErr = fmt.Errorf("webview/embedded: failed to set WEBVIEW_PATH: %w", err)
 		}
 	})
 	return extractErr
@@ -122,9 +130,33 @@ func Extract() error {
 	return ExtractTo("")
 }
 
-// init calls Extract for backward compatibility with the "import _ embedded"
-// pattern. New code should call ExtractTo() explicitly before glaze.Init().
+// init registers the pre-load integrity verifier unconditionally and then
+// calls Extract for backward compatibility with the "import _ embedded" pattern.
+//
+// The verifier is registered BEFORE extraction so that glaze.Init() will
+// always hash-check the library before dlopen/LoadLibrary, regardless of
+// whether extraction succeeded, failed, or was skipped.
+//
+// New code should call ExtractTo() explicitly before glaze.Init().
 func init() {
+	// Unconditionally register the pre-load verifier so that any library
+	// loaded via glaze.Init() is verified against the embedded BLAKE2b-256
+	// hash. This closes the TOCTOU window between extraction and loading
+	// and ensures verification even if ExtractTo encounters an error.
+	glaze.VerifyBeforeLoad = func(path string) error {
+		actual, err := fileHash(path)
+		if err != nil {
+			return fmt.Errorf("webview/embedded: failed to hash library before load %s: %w", path, err)
+		}
+		if actual != expectedLibHash {
+			return fmt.Errorf(
+				"webview/embedded: pre-load integrity check failed for %s: expected %s, got %s",
+				path, expectedLibHash, actual,
+			)
+		}
+		return nil
+	}
+
 	if err := Extract(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)

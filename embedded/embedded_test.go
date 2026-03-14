@@ -1,19 +1,34 @@
 package embedded
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/crgimenes/glaze"
 )
 
 // resetExtractState resets the package-level sync.Once and error so that
 // ExtractTo can be called again in subsequent test cases.
+// It also re-registers the verifier (which init sets unconditionally).
 func resetExtractState() {
 	extractOnce = sync.Once{}
 	extractErr = nil
 	extractDir = ""
+	// Re-register exactly as init() does.
+	glaze.VerifyBeforeLoad = func(path string) error {
+		actual, err := fileHash(path)
+		if err != nil {
+			return err
+		}
+		if actual != expectedLibHash {
+			return fmt.Errorf("hash mismatch: expected %s, got %s", expectedLibHash, actual)
+		}
+		return nil
+	}
 }
 
 func TestComputeHash(t *testing.T) {
@@ -189,6 +204,56 @@ func TestDirPermissions(t *testing.T) {
 	perm := info.Mode().Perm()
 	if perm != 0o700 {
 		t.Errorf("dir permissions: got %o, want 0700", perm)
+	}
+}
+
+func TestVerifyBeforeLoadSetUnconditionally(t *testing.T) {
+	// The verifier must be set by init(), not by ExtractTo.
+	// Even without calling ExtractTo, VerifyBeforeLoad must be non-nil.
+	if glaze.VerifyBeforeLoad == nil {
+		t.Fatal("VerifyBeforeLoad was not set by init()")
+	}
+
+	// Verify it accepts a file matching the embedded library hash.
+	dir := t.TempDir()
+	file := filepath.Join(dir, name)
+	if err := os.WriteFile(file, lib, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := glaze.VerifyBeforeLoad(file); err != nil {
+		t.Fatalf("VerifyBeforeLoad rejected valid library: %v", err)
+	}
+
+	// Verify it rejects a tampered file.
+	tampered := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(tampered, []byte("BAD"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := glaze.VerifyBeforeLoad(tampered); err == nil {
+		t.Fatal("VerifyBeforeLoad should reject tampered library")
+	}
+}
+
+func TestVerifyBeforeLoadSurvivesExtractError(t *testing.T) {
+	resetExtractState()
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, name)
+
+	// Pre-place a tampered file so ExtractTo fails.
+	if err := os.WriteFile(file, []byte("MALICIOUS"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+
+	// ExtractTo should fail...
+	err := ExtractTo(dir)
+	if err == nil {
+		t.Fatal("expected ExtractTo to fail on tampered file")
+	}
+
+	// ...but VerifyBeforeLoad must STILL be set (it was set before extraction).
+	if glaze.VerifyBeforeLoad == nil {
+		t.Fatal("VerifyBeforeLoad must remain set even when ExtractTo fails")
 	}
 }
 

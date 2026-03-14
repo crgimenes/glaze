@@ -31,8 +31,7 @@ func libraryPath() string {
 	for _, v := range paths {
 		n := filepath.Join(v, name)
 		if _, err := os.Stat(n); err == nil {
-			name = n
-			break
+			return n
 		}
 	}
 
@@ -40,6 +39,11 @@ func libraryPath() string {
 }
 
 func loadLibrary(name string) (uintptr, error) {
+	if VerifyBeforeLoad != nil {
+		if err := VerifyBeforeLoad(name); err != nil {
+			return 0, fmt.Errorf("webview: library verification failed: %w", err)
+		}
+	}
 	return purego.Dlopen(name, purego.RTLD_LAZY|purego.RTLD_GLOBAL)
 }
 

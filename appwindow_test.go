@@ -40,6 +40,36 @@ func TestAppWindowInvalidAddr(t *testing.T) {
 	}
 }
 
+func TestSetupTCPTransportRejectsNonLoopback(t *testing.T) {
+	tests := []struct {
+		name    string
+		addr    string
+		wantErr bool
+	}{
+		{name: "loopback v4", addr: "127.0.0.1:0", wantErr: false},
+		{name: "loopback v6", addr: "[::1]:0", wantErr: false},
+		{name: "wildcard v4", addr: "0.0.0.0:8080", wantErr: true},
+		{name: "wildcard v6", addr: "[::]:8080", wantErr: true},
+		{name: "external ip", addr: "192.168.1.1:8080", wantErr: true},
+		{name: "all interfaces", addr: ":8080", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := setupTCPTransport(tt.addr)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error for non-loopback address")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			_ = result.listener.Close()
+		})
+	}
+}
+
 func TestResolveAppTransport(t *testing.T) {
 	tests := []struct {
 		name      string
