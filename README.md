@@ -21,8 +21,6 @@ This repository started from the original `go-webview` project, but it has diver
 
 ## Animated Examples
 
-GitHub renders animated GIF previews reliably in `README.md`. Click any preview to open the example directory.
-
 | Desktop | Game of Life | Starfield |
 | --- | --- | --- |
 | [![Desktop example preview](imgs/desktop.gif)](examples/desktop/) | [![Game of Life example preview](imgs/gameoflife.gif)](examples/gameoflife/) | [![Starfield example preview](imgs/starfield.gif)](examples/starfield/) |
