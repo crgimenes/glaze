@@ -13,7 +13,7 @@ const fovValue = document.getElementById('fovValue');
 const toggleMapBtn = document.getElementById('toggleMapBtn');
 const shuffleBtn = document.getElementById('shuffleBtn');
 const resetBtn = document.getElementById('resetBtn');
-const movementKeys = new Set(['w', 'a', 's', 'd', 'q', 'e', 'arrowleft', 'arrowright']);
+const movementKeys = new Set(['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowleft', 'arrowright']);
 
 const mapGrid = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
@@ -121,7 +121,7 @@ function updatePlayer(deltaSeconds) {
     const rightX = Math.cos(player.angle + Math.PI / 2);
     const rightY = Math.sin(player.angle + Math.PI / 2);
 
-    if (keyState.has('w')) {
+    if (keyState.has('w') || keyState.has('arrowup')) {
         moveX += forwardX;
         moveY += forwardY;
     }
