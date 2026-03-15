@@ -3,11 +3,11 @@ package main
 import (
 	"embed"
 	"fmt"
+	"io/fs"
 	"log"
 	"math/rand/v2"
-	"net/url"
-	"os"
-	"path/filepath"
+	"net"
+	"net/http"
 	"sync"
 
 	"github.com/crgimenes/glaze"
@@ -152,31 +152,29 @@ func (g *Game) snapshot() [][]bool {
 	return out
 }
 
-func stageUIFiles() (string, string, error) {
-	tmpDir, err := os.MkdirTemp("", "glaze-gameoflife-*")
+// startServer starts a local HTTP server on a random loopback port
+// serving the embedded UI files. Returns the base URL.
+func startServer() (string, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return "", "", fmt.Errorf("create temp dir: %w", err)
+		return "", fmt.Errorf("listen: %w", err)
 	}
 
-	files := []string{"ui/index.html", "ui/app.css", "ui/app.js"}
-	for _, name := range files {
-		data, readErr := uiFS.ReadFile(name)
-		if readErr != nil {
-			_ = os.RemoveAll(tmpDir)
-			return "", "", fmt.Errorf("read embedded file %s: %w", name, readErr)
-		}
-
-		base := filepath.Base(name)
-		target := filepath.Join(tmpDir, base)
-		if writeErr := os.WriteFile(target, data, 0o600); writeErr != nil {
-			_ = os.RemoveAll(tmpDir)
-			return "", "", fmt.Errorf("write ui file %s: %w", target, writeErr)
-		}
+	sub, err := fs.Sub(uiFS, "ui")
+	if err != nil {
+		return "", fmt.Errorf("sub fs: %w", err)
 	}
 
-	indexPath := filepath.Join(tmpDir, "index.html")
-	indexURL := (&url.URL{Scheme: "file", Path: indexPath}).String()
-	return tmpDir, indexURL, nil
+	mux := http.NewServeMux()
+	mux.Handle("/", http.FileServer(http.FS(sub)))
+
+	go func() {
+		srv := &http.Server{Handler: mux}
+		_ = srv.Serve(ln)
+	}()
+
+	addr := ln.Addr().(*net.TCPAddr)
+	return fmt.Sprintf("http://127.0.0.1:%d", addr.Port), nil
 }
 
 func main() {
@@ -195,12 +193,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	uiDir, indexURL, err := stageUIFiles()
+	baseURL, err := startServer()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer os.RemoveAll(uiDir)
 
-	w.Navigate(indexURL)
+	w.Navigate(baseURL)
 	w.Run()
 }

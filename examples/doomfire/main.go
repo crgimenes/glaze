@@ -47,8 +47,8 @@ func main() {
 	}
 	defer w.Destroy()
 
-	w.SetTitle("Starfield")
-	w.SetSize(1024, 768, glaze.HintNone)
+	w.SetTitle("Doom Fire")
+	w.SetSize(960, 540, glaze.HintNone)
 
 	baseURL, err := startServer()
 	if err != nil {

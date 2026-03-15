@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mandelbrot and Julia Sets</title>
+    <link rel="stylesheet" href="app.css">
+</head>
+<body>
+    <canvas id="fractalCanvas"></canvas>
+    <div id="controls">
+        <div class="control-group">
+            <label>
+                <input type="radio" name="fractalType" value="mandelbrot" checked> Mandelbrot
+            </label>
+            <label>
+                <input type="radio" name="fractalType" value="julia"> Julia
+            </label>
+        </div>
+        <div class="control-group" id="julia-controls">
+            <label for="cx">C_x: <span id="cx-value">-0.7</span></label>
+            <input type="range" id="cx" min="-2" max="2" value="-0.7" step="0.001">
+            <label for="cy">C_y: <span id="cy-value">0.27015</span></label>
+            <input type="range" id="cy" min="-2" max="2" value="0.27015" step="0.001">
+        </div>
+        <div class="control-group">
+            <label for="iterations">Iterations: <span id="iterations-value">100</span></label>
+            <input type="range" id="iterations" min="50" max="1000" value="100" step="10">
+        </div>
+        <div class="control-group">
+            <label for="color-scheme">Color Scheme:</label>
+            <select id="color-scheme">
+                <option value="blue-gold">Blue/Gold</option>
+                <option value="grayscale">Grayscale</option>
+                <option value="psychedelic">Psychedelic</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <button id="reset-btn">Reset View</button>
+        </div>
+        <div id="info">
+            <p>Zoom: <span id="zoom-level">1.00</span></p>
+            <p>Center: (<span id="center-x">0.0</span>, <span id="center-y">0.0</span>)</p>
+            <p>Mouse: (<span id="mouse-x">0.0</span>, <span id="mouse-y">0.0</span>)</p>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
