@@ -19,7 +19,7 @@ This repository started from the original `go-webview` project, but it has diver
 - JavaScript to Go binding support
 - Utility helpers for desktop app patterns: `BindMethods`, `RenderHTML`, `AppWindow`
 
-## Animated Examples
+## Examples
 
 | Desktop | Game of Life | Starfield |
 | --- | --- | --- |
