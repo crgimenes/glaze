@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Falling Sand Simulation</title>
+    <link rel="stylesheet" href="app.css">
+</head>
+<body>
+    <canvas id="simCanvas"></canvas>
+    <aside id="hud">
+        <div class="panel-section material-picker">
+            <button type="button" class="tool active" data-material="sand">Sand</button>
+            <button type="button" class="tool" data-material="water">Water</button>
+            <button type="button" class="tool" data-material="smoke">Smoke</button>
+            <button type="button" class="tool eraser" data-material="empty">Erase</button>
+        </div>
+
+        <div class="panel-section sliders">
+            <label>
+                Brush
+                <input id="brushSize" type="range" min="1" max="8" value="3">
+                <span id="brushValue">3</span>
+            </label>
+            <label>
+                Spawn Rate
+                <input id="spawnRate" type="range" min="2" max="12" value="6">
+                <span id="spawnValue">6</span>
+            </label>
+            <label>
+                Wind
+                <input id="wind" type="range" min="-2" max="2" step="1" value="0">
+                <span id="windValue">0</span>
+            </label>
+        </div>
+
+        <div class="panel-section actions">
+            <button id="pauseBtn" type="button">Pause</button>
+            <button id="clearBtn" type="button">Clear</button>
+            <button id="randomBtn" type="button">Randomize</button>
+        </div>
+
+        <div class="panel-section stats">
+            <p>Particles <span id="particleCount">0</span></p>
+            <p>Material <span id="activeMaterial">sand</span></p>
+            <p>Status <span id="simStatus">running</span></p>
+        </div>
+    </aside>
+
+    <script src="app.js"></script>
+</body>
+</html>
