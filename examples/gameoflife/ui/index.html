@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game of Life</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="toolbar">
+    <button id="btnPlay">&#9654; Play</button>
+    <button id="btnStep">Step</button>
+    <div class="sep"></div>
+    <button id="btnRandom">Random</button>
+    <button id="btnClear">Clear</button>
+    <div class="sep"></div>
+    <label>Speed
+      <input type="range" id="speed" min="1" max="30" value="10">
+    </label>
+    <span id="genCount" class="info">Gen: 0</span>
+  </div>
+  <canvas id="grid"></canvas>
+  <p class="info">Click or drag to toggle cells. Toroidal grid (edges wrap).</p>
+  <script src="app.js"></script>
+</body>
+</html>
