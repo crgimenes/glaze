@@ -1,0 +1,129 @@
+:root {
+    --bg: #1a1a1a;
+    --panel: #2a2a2a;
+    --panel-border: #444;
+    --text: #e0e0e0;
+    --muted: #a5a5a5;
+    --accent: #3b82f6;
+    --floor: #343434;
+    --ceiling: #1d2230;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+}
+
+body {
+    background: var(--bg);
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+}
+
+#viewCanvas {
+    display: block;
+    width: calc(100vw - clamp(280px, 24vw, 360px));
+    height: 100vh;
+    background: #000;
+    image-rendering: auto;
+}
+
+#hud {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 10;
+    width: clamp(280px, 24vw, 360px);
+    height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 1rem;
+    border-left: 1px solid var(--panel-border);
+    background: var(--panel);
+    pointer-events: auto;
+}
+
+.panel-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-bottom: 1px solid var(--panel-border);
+    padding-bottom: 1.5rem;
+}
+
+.panel-section:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.controls label,
+.stats p,
+.help p {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px 12px;
+    align-items: center;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.controls input[type="range"] {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: 100%;
+    accent-color: var(--accent);
+}
+
+.stats span,
+.help span,
+.controls span {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.actions button {
+    width: 100%;
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    background: #333;
+    color: var(--text);
+    padding: 0.5rem;
+    font-size: 1rem;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.actions button:hover {
+    background: #3b3b3b;
+}
+
+@media (max-width: 760px) {
+    #viewCanvas {
+        width: 100vw;
+        height: 100vh;
+    }
+
+    #hud {
+        left: 0;
+        right: 0;
+        top: 0;
+        width: 100vw;
+        height: auto;
+        max-height: 42vh;
+        border-left: none;
+        border-bottom: 1px solid var(--panel-border);
+    }
+}
