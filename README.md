@@ -19,11 +19,24 @@ This repository started from the original `go-webview` project, but it has diver
 - JavaScript to Go binding support
 - Utility helpers for desktop app patterns: `BindMethods`, `RenderHTML`, `AppWindow`
 
-## Example Screenshot
+## Animated Examples
 
-Desktop example (`examples/desktop`):
+GitHub renders animated GIF previews reliably in `README.md`. Click any preview to open the original WebM capture.
 
-![Glaze Desktop Example](imgs/ScreenshotExampleDesktop.png)
+| Desktop | Mandelbrot | Raycasting |
+| --- | --- | --- |
+| [![Desktop example preview](imgs/desktop.gif)](imgs/desktop.webm) | [![Mandelbrot example preview](imgs/mandelbrot.gif)](imgs/mandelbrot.webm) | [![Raycasting example preview](imgs/raycasting.gif)](imgs/raycasting.webm) |
+
+More example recordings:
+
+- [Desktop](imgs/desktop.webm)
+- [Game of Life](imgs/gameoflife.webm)
+- [Starfield](imgs/starfield.webm)
+- [Doom Fire](imgs/doomfire.webm)
+- [Mandelbrot](imgs/mandelbrot.webm)
+- [Falling Sand](imgs/fallingsand.webm)
+- [Raycasting](imgs/raycasting.webm)
+- [Filo REPL](imgs/filorepl.webm)
 
 ## Install
 
