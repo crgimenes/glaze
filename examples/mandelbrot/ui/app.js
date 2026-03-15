@@ -43,6 +43,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let renderInFlight = false;
     let renderQueued = false;
     let renderVersion = 0;
+    let renderController = null;
+    let lastCanvasWidth = 0;
+    let lastCanvasHeight = 0;
+    let resizeTimer = null;
+    let isResizing = false;
+    let resizeObserver = null;
 
     function buildRenderURL() {
         const params = new URLSearchParams({
@@ -61,6 +67,21 @@ document.addEventListener('DOMContentLoaded', () => {
         return `${window.location.origin}/render?${params.toString()}`;
     }
 
+    function restartView() {
+        state = createDefaultState();
+        syncControls();
+    }
+
+    function cancelRender() {
+        renderVersion += 1;
+        renderQueued = false;
+        if (renderController) {
+            renderController.abort();
+            renderController = null;
+        }
+        renderInFlight = false;
+    }
+
     async function drawFractal() {
         const width = canvas.width;
         const height = canvas.height;
@@ -69,10 +90,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const requestVersion = ++renderVersion;
+        const controller = new AbortController();
+        renderController = controller;
         renderInFlight = true;
 
         try {
-            const response = await fetch(buildRenderURL());
+            const response = await fetch(buildRenderURL(), { signal: controller.signal });
             if (!response.ok) {
                 throw new Error(`render failed with status ${response.status}`);
             }
@@ -82,12 +105,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            if (width !== canvas.width || height !== canvas.height) {
+                requestRender();
+                return;
+            }
+
             const pixels = new Uint8ClampedArray(buffer);
             const imageData = new ImageData(pixels, width, height);
             ctx.putImageData(imageData, 0, 0);
         } catch (error) {
-            console.error(error);
+            if (error.name !== 'AbortError') {
+                console.error(error);
+            }
         } finally {
+            if (renderController === controller) {
+                renderController = null;
+            }
             renderInFlight = false;
             if (renderQueued) {
                 renderQueued = false;
@@ -96,6 +129,43 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         updateInfo();
+    }
+
+    function finishResize() {
+        const nextWidth = canvas.clientWidth;
+        const nextHeight = canvas.clientHeight;
+        if (!nextWidth || !nextHeight) {
+            isResizing = false;
+            return;
+        }
+
+        const previousArea = lastCanvasWidth * lastCanvasHeight;
+        const nextArea = nextWidth * nextHeight;
+        const grewSignificantly = previousArea > 0 && nextArea > previousArea * 1.35;
+
+        canvas.width = nextWidth;
+        canvas.height = nextHeight;
+        lastCanvasWidth = canvas.width;
+        lastCanvasHeight = canvas.height;
+        isResizing = false;
+
+        if (grewSignificantly) {
+            restartView();
+        }
+
+        requestRender();
+    }
+
+    function scheduleResize() {
+        isResizing = true;
+        cancelRender();
+        if (resizeTimer) {
+            window.clearTimeout(resizeTimer);
+        }
+        resizeTimer = window.setTimeout(() => {
+            resizeTimer = null;
+            finishResize();
+        }, 120);
     }
 
     function requestRender() {
@@ -165,6 +235,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         lastFrameTime = now;
+        if (isResizing) {
+            return;
+        }
+
         if (!state.isDragging) {
             stepAnimation(elapsed / 1000);
         }
@@ -172,9 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function resizeCanvas() {
-        canvas.width = canvas.clientWidth;
-        canvas.height = canvas.clientHeight;
-        requestRender();
+        scheduleResize();
     }
 
     window.addEventListener('resize', resizeCanvas);
@@ -268,10 +340,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     resetBtn.addEventListener('click', () => {
-        state = createDefaultState();
-        syncControls();
+        restartView();
         requestRender();
     });
+
+    if (typeof ResizeObserver === 'function') {
+        resizeObserver = new ResizeObserver(() => {
+            scheduleResize();
+        });
+        resizeObserver.observe(canvas);
+        resizeObserver.observe(document.body);
+    }
 
     syncControls();
     resizeCanvas();

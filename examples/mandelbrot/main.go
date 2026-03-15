@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -11,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"syscall"
 
 	"github.com/crgimenes/glaze"
 	_ "github.com/crgimenes/glaze/embedded"
@@ -133,7 +136,7 @@ func parseFloatParam(raw string, minimum float64, maximum float64) (float64, err
 	return value, nil
 }
 
-func renderFractal(params renderParams) []byte {
+func renderFractal(ctx context.Context, params renderParams) ([]byte, bool) {
 	pixels := make([]byte, params.width*params.height*4)
 	workers := runtime.GOMAXPROCS(0)
 	if workers > params.height {
@@ -141,30 +144,46 @@ func renderFractal(params renderParams) []byte {
 	}
 
 	rows := make(chan int, params.height)
+	results := make(chan bool, workers)
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			renderRows(params, pixels, rows)
+			results <- renderRows(ctx, params, pixels, rows)
 		}()
 	}
 
 	for py := range params.height {
+		if ctx.Err() != nil {
+			close(rows)
+			wg.Wait()
+			close(results)
+			return nil, false
+		}
 		rows <- py
 	}
 	close(rows)
 	wg.Wait()
+	close(results)
+	for ok := range results {
+		if !ok {
+			return nil, false
+		}
+	}
 
-	return pixels
+	return pixels, true
 }
 
-func renderRows(params renderParams, pixels []byte, rows <-chan int) {
+func renderRows(ctx context.Context, params renderParams, pixels []byte, rows <-chan int) bool {
 	widthHalf := float64(params.width) / 2
 	heightHalf := float64(params.height) / 2
 	scale := 4.0 / (float64(params.width) * params.zoom)
 
 	for py := range rows {
+		if ctx.Err() != nil {
+			return false
+		}
 		y0 := (float64(py)-heightHalf)*scale + params.centerY
 		rowOffset := py * params.width * 4
 		for px := range params.width {
@@ -178,6 +197,8 @@ func renderRows(params renderParams, pixels []byte, rows <-chan int) {
 			pixels[pixelOffset+3] = 255
 		}
 	}
+
+	return true
 }
 
 func iterationsAt(params renderParams, x0 float64, y0 float64) int {
@@ -241,13 +262,30 @@ func renderHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pixels := renderFractal(params)
+	pixels, ok := renderFractal(r.Context(), params)
+	if !ok {
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	_, err = w.Write(pixels)
 	if err != nil {
+		if isExpectedDisconnect(err) {
+			return
+		}
 		log.Printf("render write failed: %v", err)
 	}
+}
+
+func isExpectedDisconnect(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+
+	return false
 }
 
 // startServer starts a local HTTP server on a random loopback port
