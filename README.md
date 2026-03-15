@@ -21,22 +21,19 @@ This repository started from the original `go-webview` project, but it has diver
 
 ## Animated Examples
 
-GitHub renders animated GIF previews reliably in `README.md`. Click any preview to open the original WebM capture.
+GitHub renders animated GIF previews reliably in `README.md`. Click any preview to open the example directory.
 
-| Desktop | Mandelbrot | Raycasting |
+| Desktop | Game of Life | Starfield |
 | --- | --- | --- |
-| [![Desktop example preview](imgs/desktop.gif)](imgs/desktop.webm) | [![Mandelbrot example preview](imgs/mandelbrot.gif)](imgs/mandelbrot.webm) | [![Raycasting example preview](imgs/raycasting.gif)](imgs/raycasting.webm) |
+| [![Desktop example preview](imgs/desktop.gif)](examples/desktop/) | [![Game of Life example preview](imgs/gameoflife.gif)](examples/gameoflife/) | [![Starfield example preview](imgs/starfield.gif)](examples/starfield/) |
 
-More example recordings:
+| Doom Fire | Mandelbrot | Falling Sand |
+| --- | --- | --- |
+| [![Doom Fire example preview](imgs/doomfire.gif)](examples/doomfire/) | [![Mandelbrot example preview](imgs/mandelbrot.gif)](examples/mandelbrot/) | [![Falling Sand example preview](imgs/fallingsand.gif)](examples/fallingsand/) |
 
-- [Desktop](imgs/desktop.webm)
-- [Game of Life](imgs/gameoflife.webm)
-- [Starfield](imgs/starfield.webm)
-- [Doom Fire](imgs/doomfire.webm)
-- [Mandelbrot](imgs/mandelbrot.webm)
-- [Falling Sand](imgs/fallingsand.webm)
-- [Raycasting](imgs/raycasting.webm)
-- [Filo REPL](imgs/filorepl.webm)
+| Raycasting | Filo REPL | |
+| --- | --- | --- |
+| [![Raycasting example preview](imgs/raycasting.gif)](examples/raycasting/) | [![Filo REPL example preview](imgs/filorepl.gif)](examples/filorepl/) | |
 
 ## Install
 
