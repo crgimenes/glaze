@@ -35,6 +35,7 @@ let wallPalette = buildPalette();
 let showMiniMap = true;
 let lastFrame = 0;
 let fps = 0;
+let hasManualInput = false;
 
 const player = {
     x: 1.5,
@@ -42,6 +43,11 @@ const player = {
     angle: 0,
     moveSpeed: 2.7,
     turnSpeed: 2.2,
+};
+
+const autoPilot = {
+    targetAngle: 0,
+    lastDecisionCell: '',
 };
 
 const keyState = new Set();
@@ -79,6 +85,63 @@ function normalizeAngle(angle) {
     return (angle % tau + tau) % tau;
 }
 
+function shortestAngleDelta(from, to) {
+    return Math.atan2(Math.sin(to - from), Math.cos(to - from));
+}
+
+function nearestCardinalIndex(angle) {
+    const normalized = normalizeAngle(angle);
+    return Math.round(normalized / (Math.PI / 2)) % 4;
+}
+
+function directionToAngle(index) {
+    return normalizeAngle(index * (Math.PI / 2));
+}
+
+function openDirectionIndices(cellX, cellY) {
+    const directions = [
+        { index: 0, dx: 1, dy: 0 },
+        { index: 1, dx: 0, dy: 1 },
+        { index: 2, dx: -1, dy: 0 },
+        { index: 3, dx: 0, dy: -1 },
+    ];
+
+    return directions
+        .filter((direction) => wallAt(cellX + direction.dx + 0.5, cellY + direction.dy + 0.5) === 0)
+        .map((direction) => direction.index);
+}
+
+function chooseAutoPilotDirection(cellX, cellY, forceTurn) {
+    const currentIndex = nearestCardinalIndex(autoPilot.targetAngle);
+    const reverseIndex = (currentIndex + 2) % 4;
+    const openDirections = openDirectionIndices(cellX, cellY);
+
+    if (openDirections.length === 0) {
+        return currentIndex;
+    }
+
+    let candidates = openDirections.filter((index) => index !== reverseIndex);
+    if (candidates.length === 0) {
+        candidates = [reverseIndex];
+    }
+
+    if (!forceTurn && candidates.includes(currentIndex) && candidates.length > 1 && Math.random() < 0.72) {
+        return currentIndex;
+    }
+
+    if (!forceTurn && candidates.includes(currentIndex) && candidates.length === 1) {
+        return currentIndex;
+    }
+
+    const turningOptions = candidates.filter((index) => index !== currentIndex);
+    if (turningOptions.length > 0) {
+        const choice = Math.floor(Math.random() * turningOptions.length);
+        return turningOptions[choice];
+    }
+
+    return candidates[0];
+}
+
 function wallAt(x, y) {
     const mx = Math.floor(x);
     const my = Math.floor(y);
@@ -99,7 +162,60 @@ function movePlayer(dx, dy) {
     }
 }
 
+function updateAutoPilot(deltaSeconds) {
+    const cellX = Math.floor(player.x);
+    const cellY = Math.floor(player.y);
+    const cellCenterX = cellX + 0.5;
+    const cellCenterY = cellY + 0.5;
+    const cellKey = `${cellX},${cellY}`;
+    const targetIndex = nearestCardinalIndex(autoPilot.targetAngle);
+    const currentForwardX = Math.cos(directionToAngle(targetIndex));
+    const currentForwardY = Math.sin(directionToAngle(targetIndex));
+    const lookAhead = 0.9;
+    const frontBlocked = wallAt(player.x + currentForwardX * lookAhead, player.y + currentForwardY * lookAhead) !== 0;
+    const nearCenter = Math.abs(player.x - cellCenterX) < 0.16 && Math.abs(player.y - cellCenterY) < 0.16;
+
+    if (nearCenter && autoPilot.lastDecisionCell !== cellKey) {
+        autoPilot.targetAngle = directionToAngle(chooseAutoPilotDirection(cellX, cellY, frontBlocked));
+        autoPilot.lastDecisionCell = cellKey;
+    } else if (frontBlocked) {
+        autoPilot.targetAngle = directionToAngle(chooseAutoPilotDirection(cellX, cellY, true));
+    }
+
+    const angleDelta = shortestAngleDelta(player.angle, autoPilot.targetAngle);
+    const maxTurn = player.turnSpeed * 0.95 * deltaSeconds;
+    const clampedTurn = Math.max(-maxTurn, Math.min(maxTurn, angleDelta));
+    player.angle = normalizeAngle(player.angle + clampedTurn);
+
+    const moveForwardX = Math.cos(player.angle);
+    const moveForwardY = Math.sin(player.angle);
+    const moveRightX = Math.cos(player.angle + Math.PI / 2);
+    const moveRightY = Math.sin(player.angle + Math.PI / 2);
+    const headingIndex = nearestCardinalIndex(autoPilot.targetAngle);
+    let lateralOffset = 0;
+
+    if (headingIndex === 0 || headingIndex === 2) {
+        lateralOffset = cellCenterY - player.y;
+    } else {
+        lateralOffset = cellCenterX - player.x;
+    }
+
+    const centeringStrength = Math.max(-0.55, Math.min(0.55, lateralOffset * 3.2));
+    const turnSlowdown = 1 - Math.min(0.55, Math.abs(angleDelta) / (Math.PI / 3));
+    const forwardSpeed = player.moveSpeed * (0.58 + turnSlowdown * 0.24) * deltaSeconds;
+
+    const moveX = moveForwardX * forwardSpeed + moveRightX * centeringStrength * deltaSeconds;
+    const moveY = moveForwardY * forwardSpeed + moveRightY * centeringStrength * deltaSeconds;
+
+    movePlayer(moveX, moveY);
+}
+
 function updatePlayer(deltaSeconds) {
+    if (!hasManualInput) {
+        updateAutoPilot(deltaSeconds);
+        return;
+    }
+
     let moveX = 0;
     let moveY = 0;
     if (keyState.has('arrowleft')) {
@@ -394,6 +510,7 @@ function animate(timestamp) {
 
 window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
+    hasManualInput = true;
     if (movementKeys.has(key)) {
         event.preventDefault();
     }
@@ -442,5 +559,6 @@ canvas.addEventListener('pointerdown', () => {
 window.addEventListener('resize', resizeCanvas);
 
 resizeCanvas();
+autoPilot.targetAngle = directionToAngle(nearestCardinalIndex(player.angle));
 drawFrame();
 requestAnimationFrame(animate);
