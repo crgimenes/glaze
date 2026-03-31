@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/crgimenes/devengine v0.0.6
 	github.com/crgimenes/filo v0.0.8
-	github.com/crgimenes/glaze v0.0.13
+	github.com/crgimenes/glaze v0.0.14
 )
 
 require (

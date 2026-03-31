@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/crgimenes/devengine v0.0.6
-	github.com/crgimenes/glaze v0.0.13
+	github.com/crgimenes/glaze v0.0.14
 )
 
 require (
@@ -22,5 +22,5 @@ require (
 	modernc.org/libc v1.70.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.46.1 // indirect
+	modernc.org/sqlite v1.48.0 // indirect
 )
