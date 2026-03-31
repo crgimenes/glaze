@@ -145,37 +145,7 @@ func Init() error {
 			*s.ptr = ptr
 		}
 
-		// Register C callbacks as closures that capture the runtime instance.
-		rt.dispatchCB = purego.NewCallback(func(_, arg uintptr) uintptr {
-			rt.dispatchMu.Lock()
-			fn := rt.dispatchMap[arg]
-			delete(rt.dispatchMap, arg)
-			rt.dispatchMu.Unlock()
-			if fn != nil {
-				fn()
-			}
-			return 0
-		})
-
-		rt.bindingCB = purego.NewCallback(func(idPtr, reqPtr, arg uintptr) uintptr {
-			rt.bindMu.Lock()
-			entry, ok := rt.bindingMap[arg]
-			rt.bindMu.Unlock()
-			if !ok {
-				return 0
-			}
-			id := goString(idPtr)
-			req := goString(reqPtr)
-			go func() {
-				status, resultJSON := callAndMarshal(entry.fn, id, req)
-				idBytes, newIDPtr := cString(id)
-				resBytes, newResPtr := cString(resultJSON)
-				purego.SyscallN(rt.pReturn, entry.w, uintptr(newIDPtr), uintptr(status), uintptr(newResPtr))
-				runtime.KeepAlive(idBytes)
-				runtime.KeepAlive(resBytes)
-			}()
-			return 0
-		})
+		rt.initCallbacks()
 
 		defaultRT = rt
 	})
@@ -192,10 +162,15 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 // embedded into the given parent window. Otherwise a new window is created.
 // Depending on the platform, a GtkWindow, NSWindow or HWND pointer can be passed
 // here.
+//
+// The first successful call pins the calling goroutine to its current OS thread.
+// Keep all direct UI calls on that goroutine; background goroutines must re-enter
+// through Dispatch.
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 	if err := Init(); err != nil {
 		return nil, err
 	}
+	uiThreadOnce.Do(runtime.LockOSThread)
 	rt := defaultRT
 	if rt == nil || rt.pCreate == 0 {
 		return nil, errors.New("webview: native symbols are not initialized")
@@ -262,6 +237,8 @@ var (
 	initOnce  sync.Once
 	initErr   error
 	defaultRT *glazeRuntime
+
+	uiThreadOnce sync.Once
 )
 
 // VerifyBeforeLoad, when non-nil, is called with the resolved library path
@@ -285,12 +262,7 @@ func (w *webview) Terminate() {
 }
 
 func (w *webview) Dispatch(f func()) {
-	w.rt.dispatchMu.Lock()
-	idx := w.rt.dispatchCounter
-	w.rt.dispatchCounter++
-	w.rt.dispatchMap[idx] = f
-	w.rt.dispatchMu.Unlock()
-	purego.SyscallN(w.rt.pDispatch, w.handle, w.rt.dispatchCB, idx)
+	w.rt.dispatch(w.handle, f)
 }
 
 func (w *webview) Destroy() {
@@ -517,4 +489,52 @@ func goString(c uintptr) string {
 		length++
 	}
 	return string(unsafe.Slice((*byte)(ptr), length))
+}
+
+func (rt *glazeRuntime) initCallbacks() {
+	rt.dispatchCB = purego.NewCallback(func(_, arg uintptr) uintptr {
+		rt.dispatchMu.Lock()
+		fn := rt.dispatchMap[arg]
+		delete(rt.dispatchMap, arg)
+		rt.dispatchMu.Unlock()
+		if fn != nil {
+			fn()
+		}
+		return 0
+	})
+
+	rt.bindingCB = purego.NewCallback(func(idPtr, reqPtr, arg uintptr) uintptr {
+		rt.bindMu.Lock()
+		entry, ok := rt.bindingMap[arg]
+		rt.bindMu.Unlock()
+		if !ok {
+			return 0
+		}
+		id := goString(idPtr)
+		req := goString(reqPtr)
+		go func() {
+			status, resultJSON := callAndMarshal(entry.fn, id, req)
+			rt.returnToUI(entry.w, id, status, resultJSON)
+		}()
+		return 0
+	})
+}
+
+func (rt *glazeRuntime) dispatch(handle uintptr, f func()) {
+	rt.dispatchMu.Lock()
+	idx := rt.dispatchCounter
+	rt.dispatchCounter++
+	rt.dispatchMap[idx] = f
+	rt.dispatchMu.Unlock()
+	purego.SyscallN(rt.pDispatch, handle, rt.dispatchCB, idx)
+}
+
+func (rt *glazeRuntime) returnToUI(handle uintptr, id string, status int, resultJSON string) {
+	idBytes, idPtr := cString(id)
+	resultBytes, resultPtr := cString(resultJSON)
+	rt.dispatch(handle, func() {
+		purego.SyscallN(rt.pReturn, handle, uintptr(idPtr), uintptr(status), uintptr(resultPtr))
+		runtime.KeepAlive(idBytes)
+		runtime.KeepAlive(resultBytes)
+	})
 }

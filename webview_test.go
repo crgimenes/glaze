@@ -3,7 +3,6 @@
 package glaze_test
 
 import (
-	"runtime"
 	"testing"
 	"time"
 
@@ -12,9 +11,6 @@ import (
 )
 
 func TestWebview(t *testing.T) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
 	run := make(chan bool, 1)
 
 	w, err := glaze.New(true)

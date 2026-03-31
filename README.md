@@ -71,6 +71,10 @@ func main() {
 }
 ```
 
+Glaze pins the goroutine that creates the first window to its current OS thread.
+Keep direct window calls on that goroutine, and use `Dispatch` to re-enter the UI
+thread from background work.
+
 ## Desktop Helpers
 
 ### BindMethods
