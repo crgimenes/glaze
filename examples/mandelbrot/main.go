@@ -138,20 +138,15 @@ func parseFloatParam(raw string, minimum float64, maximum float64) (float64, err
 
 func renderFractal(ctx context.Context, params renderParams) ([]byte, bool) {
 	pixels := make([]byte, params.width*params.height*4)
-	workers := runtime.GOMAXPROCS(0)
-	if workers > params.height {
-		workers = params.height
-	}
+	workers := min(runtime.GOMAXPROCS(0), params.height)
 
 	rows := make(chan int, params.height)
 	results := make(chan bool, workers)
 	var wg sync.WaitGroup
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			results <- renderRows(ctx, params, pixels, rows)
-		}()
+		})
 	}
 
 	for py := range params.height {
