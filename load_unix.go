@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build linux
 
 package glaze
 
@@ -6,29 +6,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/ebitengine/purego"
 )
 
 func libraryPath() string {
-	var name string
-	var paths []string
+	const name = "libwebview.so"
 
 	webviewPath := os.Getenv("WEBVIEW_PATH")
 	execPath, _ := os.Executable()
 	dir := filepath.Dir(execPath)
 
-	switch runtime.GOOS {
-	case "linux":
-		name = "libwebview.so"
-		paths = []string{webviewPath, dir}
-	case "darwin":
-		name = "libwebview.dylib"
-		paths = []string{webviewPath, dir, filepath.Join(dir, "..", "Frameworks")}
-	}
-
-	for _, v := range paths {
+	for _, v := range []string{webviewPath, dir} {
 		n := filepath.Join(v, name)
 		if _, err := os.Stat(n); err == nil {
 			return n
