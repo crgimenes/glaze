@@ -43,7 +43,7 @@ Glaze binds the WebView the operating system already provides; there is nothing 
 
 - **macOS** -- nothing extra. The Cocoa/WebKit frameworks ship with the OS.
 - **Linux** -- a system WebKitGTK: GTK4 `libwebkitgtk-6.0` *or* GTK3 `libwebkit2gtk-4.1` / `4.0` (e.g. `apt install libwebkit2gtk-4.1-0`). Glaze detects which is installed at runtime.
-- **Windows** -- the Microsoft Edge WebView2 Runtime (preinstalled on current Windows 10/11; otherwise install the Evergreen Runtime). It is located via the registry, and `New` returns an error if it is missing.
+- **Windows** -- the Microsoft Edge WebView2 Runtime (preinstalled on current Windows 10/11; otherwise install the Evergreen Runtime). It is located via the registry, and `New` returns an error if it is missing. To bundle zero native DLLs, glaze calls the runtime's internal environment-creation export directly instead of shipping `WebView2Loader.dll`; that export is undocumented and could change in a future Edge runtime (in which case `New` returns a clear error). See the note on `createEnvironment` in [webview2_windows.go](webview2_windows.go).
 
 ## Hello world
 
@@ -170,13 +170,22 @@ cd examples/filorepl && go run .
 
 ## Testing
 
-Default tests (headless-safe):
-
 ```bash
 go test ./...
 ```
 
-GUI integration test:
+This runs the pure-logic unit tests (binding marshalling, transport selection)
+plus the per-platform GUI smoke tests, which drive a real WebView
+(WKWebView / WebKitGTK / WebView2) and therefore need the system WebView present.
+On Linux the GUI tests **skip automatically when no display is set**, so the
+command above is safe on a headless box; run them under a virtual display to
+actually exercise them:
+
+```bash
+xvfb-run -a go test ./...
+```
+
+There is also a standalone GUI integration test behind a build tag:
 
 ```bash
 go test -tags=integration -run TestWebview .

@@ -23,12 +23,21 @@ var (
 	resEmbed       atomic.Value // string
 )
 
+// hasDisplay reports whether a windowing system is available. Without it
+// WebKitGTK cannot initialize, so the GUI scenarios are skipped (keeping
+// `go test ./...` headless-safe); CI runs them under xvfb, which sets DISPLAY.
+func hasDisplay() bool {
+	return os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != ""
+}
+
 func TestMain(m *testing.M) {
 	runtime.LockOSThread()
-	resBridge.Store(bridgeScenario())
-	resErrorUnbind.Store(errorUnbindScenario())
-	resRichTypes.Store(richTypesScenario())
-	resEmbed.Store(embedScenario())
+	if hasDisplay() {
+		resBridge.Store(bridgeScenario())
+		resErrorUnbind.Store(errorUnbindScenario())
+		resRichTypes.Store(richTypesScenario())
+		resEmbed.Store(embedScenario())
+	}
 	os.Exit(m.Run())
 }
 
@@ -63,7 +72,9 @@ func embedScenario() string {
 }
 
 func TestEmbedExternalWindow(t *testing.T) {
-	if got, _ := resEmbed.Load().(string); got != "embed-ok" {
+	got, _ := resEmbed.Load().(string)
+	requireGUI(t, got)
+	if got != "embed-ok" {
 		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
 	}
 }
@@ -191,22 +202,36 @@ window.addEventListener('load', async function(){
 	}
 }
 
+// requireGUI skips a GUI assertion when its scenario did not run (no display).
+func requireGUI(t *testing.T, got string) {
+	t.Helper()
+	if got == "" {
+		t.Skip("no display; set DISPLAY or run under xvfb-run")
+	}
+}
+
 func TestBridge(t *testing.T) {
-	if got, _ := resBridge.Load().(string); got != "42|hi x" {
+	got, _ := resBridge.Load().(string)
+	requireGUI(t, got)
+	if got != "42|hi x" {
 		t.Fatalf("JS<->Go bridge = %q, want %q", got, "42|hi x")
 	}
 }
 
 func TestErrorAndUnbind(t *testing.T) {
 	const want = "temp=undefined boom=kaboom"
-	if got, _ := resErrorUnbind.Load().(string); got != want {
+	got, _ := resErrorUnbind.Load().(string)
+	requireGUI(t, got)
+	if got != want {
 		t.Fatalf("error/unbind = %q, want %q", got, want)
 	}
 }
 
 func TestRichBindingTypes(t *testing.T) {
 	const want = "p=2,3 s=10"
-	if got, _ := resRichTypes.Load().(string); got != want {
+	got, _ := resRichTypes.Load().(string)
+	requireGUI(t, got)
+	if got != want {
 		t.Fatalf("rich types = %q, want %q", got, want)
 	}
 }
