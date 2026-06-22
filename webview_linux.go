@@ -384,7 +384,10 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 		bindings:   map[string]func(id, req string) (any, error){},
 	}
 	w.id = registerEngine(w)
-	w.windowInit(uintptr(window))
+	if err := w.windowInit(uintptr(window)); err != nil {
+		unregisterEngine(w.id)
+		return nil, err
+	}
 	w.windowSettings(debug)
 	if w.ownsWindow {
 		// Apply a default size (which also shows the window) unless the caller
@@ -400,13 +403,16 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 	return w, nil
 }
 
-func (w *webview) windowInit(window uintptr) {
+func (w *webview) windowInit(window uintptr) error {
 	if window != 0 {
 		w.window = window
 		w.ownsWindow = false
 	} else {
+		// gtk_init_check returns false (rather than aborting) when the windowing
+		// system cannot be initialized, e.g. no display. Surface that as an error
+		// from NewWindow instead of panicking.
 		if !gtkInit() {
-			panic("webview: gtk_init_check failed")
+			return errors.New("webview: gtk_init_check failed (no display?)")
 		}
 		w.window = gtkNewWindow()
 		gSignalConnectData(w.window, "destroy", windowDestroyFn, w.id, 0, 0)
@@ -421,6 +427,7 @@ func (w *webview) windowInit(window uintptr) {
 	registerScriptHandler(w.manager, "__webview__")
 
 	w.pushUserScript(createInitScript(bridgePostFn))
+	return nil
 }
 
 func (w *webview) windowSettings(debug bool) {
