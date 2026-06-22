@@ -88,15 +88,6 @@ type WebView interface {
 	Unbind(name string) error
 }
 
-// VerifyBeforeLoad, when non-nil, is called with the resolved library path
-// immediately before the native library is opened via dlopen/LoadLibrary.
-// The embedded package sets this to a BLAKE2b-256 integrity check so that
-// libraries replaced on disk after extraction are detected before loading.
-//
-// It is only consulted by the native-library backends (Linux/Windows); the
-// macOS backend calls the system frameworks directly and ignores it.
-var VerifyBeforeLoad func(path string) error
-
 var errorType = reflect.TypeFor[error]()
 
 // makeFuncWrapper inspects a user-supplied function "f" via reflection once,
