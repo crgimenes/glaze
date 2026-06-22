@@ -3,7 +3,7 @@
 // This example demonstrates a local-first desktop application that uses
 // devengine components directly from a glaze window:
 //
-//   - devengine/db: SQLite database (WAL, RW/RO pools, no CGO)
+//   - devengine/db/sqlite: SQLite database (WAL, RW/RO pools, no CGO)
 //   - devengine/assets: Bootstrap 5 CSS/JS, style.css (dark theme)
 //   - devengine/templates: Go HTML templates with partials (head, footer, scripts)
 //
@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/crgimenes/devengine/assets"
-	"github.com/crgimenes/devengine/db"
+	"github.com/crgimenes/devengine/db/sqlite"
 	"github.com/crgimenes/glaze"
 	_ "github.com/crgimenes/glaze/embedded"
 )
@@ -29,7 +29,7 @@ import (
 // NoteService wraps devengine's SQLite to provide note CRUD operations.
 // Its exported methods are bound to JavaScript via BindMethods.
 type NoteService struct {
-	store *db.SQLite
+	store *sqlite.SQLite
 }
 
 type Note struct {
@@ -243,8 +243,8 @@ func startAssetServer() (string, error) {
 }
 
 func main() {
-	// Open SQLite using devengine's db package — same as edev/rpgstudios use.
-	store, err := db.NewWithPath("desktop_notes.db")
+	// Open SQLite using devengine's db/sqlite package.
+	store, err := sqlite.NewWithPath("desktop_notes.db")
 	if err != nil {
 		log.Fatal(err)
 	}

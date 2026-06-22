@@ -1,0 +1,554 @@
+// Linux WebView backend in pure Go via purego's C-function bindings.
+//
+// This reimplements webview's GTK/WebKitGTK backend (gtk_webkitgtk.hh + the
+// linux compat headers) by dlopen/dlsym-ing the system GTK and WebKitGTK shared
+// objects directly, so glaze needs no cgo and no bundled libwebview.so on Linux.
+// It targets GTK 3 + webkit2gtk-4.1 (falling back to -4.0). The exported API
+// matches the native-library backend used on Windows.
+
+package glaze
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"runtime"
+	"sync"
+	"unsafe"
+
+	"github.com/ebitengine/purego"
+)
+
+const (
+	gtkWindowToplevel = 0
+
+	gPriorityHighIdle = 100
+	gSourceRemove     = 0
+
+	injectTopFrame        = 1 // WEBKIT_USER_CONTENT_INJECT_TOP_FRAME
+	injectAtDocumentStart = 0 // WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START
+
+	gdkHintMaxSize   = 1 << 2 // GDK_HINT_MAX_SIZE
+	gSignalMatchData = 1 << 4 // G_SIGNAL_MATCH_DATA
+)
+
+// gdkGeometry mirrors the C GdkGeometry struct (passed by pointer for MAX hint).
+type gdkGeometry struct {
+	MinWidth, MinHeight   int32
+	MaxWidth, MaxHeight   int32
+	BaseWidth, BaseHeight int32
+	WidthInc, HeightInc   int32
+	MinAspect, MaxAspect  float64
+	WinGravity            int32
+	_                     int32
+}
+
+// --- bound C functions -----------------------------------------------------
+
+var (
+	gIdleAddFull                     func(priority int, function, data, notify uintptr) uint32
+	gMainContextIteration            func(context uintptr, mayBlock bool) bool
+	gFree                            func(ptr uintptr)
+	gObjectRefSink                   func(obj uintptr) uintptr
+	gObjectUnref                     func(obj uintptr)
+	gSignalConnectData               func(instance uintptr, signal string, handler, data, destroy uintptr, flags int) uint64
+	gSignalHandlersDisconnectMatched func(instance uintptr, mask int, signalID, detail uint32, closure, fn, data uintptr) uint32
+
+	gtkInitCheck              func(argc, argv uintptr) bool
+	gtkWindowNew              func(typ int) uintptr
+	gtkWindowSetTitle         func(window uintptr, title string)
+	gtkWindowSetResizable     func(window uintptr, resizable bool)
+	gtkWindowResize           func(window uintptr, w, h int)
+	gtkWidgetSetSizeRequest   func(widget uintptr, w, h int)
+	gtkWindowSetGeometryHints func(window, widget uintptr, geom *gdkGeometry, mask int)
+	gtkContainerAdd           func(container, widget uintptr)
+	gtkContainerRemove        func(container, widget uintptr)
+	gtkWidgetShow             func(widget uintptr)
+	gtkWidgetGrabFocus        func(widget uintptr)
+	gtkWindowClose            func(window uintptr)
+
+	webkitWebViewNew                              func() uintptr
+	webkitWebViewGetUserContentManager            func(webview uintptr) uintptr
+	webkitWebViewGetSettings                      func(webview uintptr) uintptr
+	webkitSettingsSetJavascriptCanAccessClipboard func(settings uintptr, enabled bool)
+	webkitSettingsSetEnableWriteConsoleToStdout   func(settings uintptr, enabled bool)
+	webkitSettingsSetEnableDeveloperExtras        func(settings uintptr, enabled bool)
+	webkitWebViewLoadURI                          func(webview uintptr, uri string)
+	webkitWebViewLoadHTML                         func(webview uintptr, html string, baseURI uintptr)
+	webkitWebViewGetURI                           func(webview uintptr) uintptr
+	webkitUserContentManagerRegisterHandler       func(manager uintptr, name string)
+	webkitUserContentManagerAddScript             func(manager, script uintptr)
+	webkitUserContentManagerRemoveAllScripts      func(manager uintptr)
+	webkitUserScriptNew                           func(source string, frames, time int, allow, block uintptr) uintptr
+	webkitUserScriptUnref                         func(script uintptr)
+	webkitJavascriptResultGetJSValue              func(result uintptr) uintptr
+
+	webkitWebViewEvaluateJavascript func(webview uintptr, script string, length int, world, source, cancellable, callback, userData uintptr)
+	webkitWebViewRunJavascript      func(webview uintptr, script string, cancellable, callback, userData uintptr)
+	haveEvaluateJavascript          bool
+
+	jscValueToString func(value uintptr) uintptr
+)
+
+// --- one-time init ---------------------------------------------------------
+
+var (
+	initOnce     sync.Once
+	initErr      error
+	uiThreadOnce sync.Once
+
+	dispatchSourceFn uintptr
+	messageHandlerFn uintptr
+	windowDestroyFn  uintptr
+)
+
+func openFirst(names ...string) (uintptr, error) {
+	var lastErr error
+	for _, n := range names {
+		h, err := purego.Dlopen(n, purego.RTLD_NOW|purego.RTLD_GLOBAL)
+		if err == nil {
+			return h, nil
+		}
+		lastErr = err
+	}
+	return 0, fmt.Errorf("webview: none of %v could be loaded: %w", names, lastErr)
+}
+
+// Init loads the system GTK + WebKitGTK libraries and resolves all symbols.
+// Safe to call multiple times; New calls it.
+func Init() error { return ensureInit() }
+
+func ensureInit() error {
+	initOnce.Do(func() {
+		glib, err := openFirst("libglib-2.0.so.0")
+		if err != nil {
+			initErr = err
+			return
+		}
+		gobject, err := openFirst("libgobject-2.0.so.0")
+		if err != nil {
+			initErr = err
+			return
+		}
+		gtk, err := openFirst("libgtk-3.so.0")
+		if err != nil {
+			initErr = err
+			return
+		}
+		webkit, err := openFirst("libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37")
+		if err != nil {
+			initErr = err
+			return
+		}
+		jsc, err := openFirst("libjavascriptcoregtk-4.1.so.0", "libjavascriptcoregtk-4.0.so.18")
+		if err != nil {
+			initErr = err
+			return
+		}
+
+		purego.RegisterLibFunc(&gIdleAddFull, glib, "g_idle_add_full")
+		purego.RegisterLibFunc(&gMainContextIteration, glib, "g_main_context_iteration")
+		purego.RegisterLibFunc(&gFree, glib, "g_free")
+		purego.RegisterLibFunc(&gObjectRefSink, gobject, "g_object_ref_sink")
+		purego.RegisterLibFunc(&gObjectUnref, gobject, "g_object_unref")
+		purego.RegisterLibFunc(&gSignalConnectData, gobject, "g_signal_connect_data")
+		// g_signal_handlers_disconnect_by_data is a macro, not a symbol.
+		purego.RegisterLibFunc(&gSignalHandlersDisconnectMatched, gobject, "g_signal_handlers_disconnect_matched")
+
+		purego.RegisterLibFunc(&gtkInitCheck, gtk, "gtk_init_check")
+		purego.RegisterLibFunc(&gtkWindowNew, gtk, "gtk_window_new")
+		purego.RegisterLibFunc(&gtkWindowSetTitle, gtk, "gtk_window_set_title")
+		purego.RegisterLibFunc(&gtkWindowSetResizable, gtk, "gtk_window_set_resizable")
+		purego.RegisterLibFunc(&gtkWindowResize, gtk, "gtk_window_resize")
+		purego.RegisterLibFunc(&gtkWidgetSetSizeRequest, gtk, "gtk_widget_set_size_request")
+		purego.RegisterLibFunc(&gtkWindowSetGeometryHints, gtk, "gtk_window_set_geometry_hints")
+		purego.RegisterLibFunc(&gtkContainerAdd, gtk, "gtk_container_add")
+		purego.RegisterLibFunc(&gtkContainerRemove, gtk, "gtk_container_remove")
+		purego.RegisterLibFunc(&gtkWidgetShow, gtk, "gtk_widget_show")
+		purego.RegisterLibFunc(&gtkWidgetGrabFocus, gtk, "gtk_widget_grab_focus")
+		purego.RegisterLibFunc(&gtkWindowClose, gtk, "gtk_window_close")
+
+		purego.RegisterLibFunc(&webkitWebViewNew, webkit, "webkit_web_view_new")
+		purego.RegisterLibFunc(&webkitWebViewGetUserContentManager, webkit, "webkit_web_view_get_user_content_manager")
+		purego.RegisterLibFunc(&webkitWebViewGetSettings, webkit, "webkit_web_view_get_settings")
+		purego.RegisterLibFunc(&webkitSettingsSetJavascriptCanAccessClipboard, webkit, "webkit_settings_set_javascript_can_access_clipboard")
+		purego.RegisterLibFunc(&webkitSettingsSetEnableWriteConsoleToStdout, webkit, "webkit_settings_set_enable_write_console_messages_to_stdout")
+		purego.RegisterLibFunc(&webkitSettingsSetEnableDeveloperExtras, webkit, "webkit_settings_set_enable_developer_extras")
+		purego.RegisterLibFunc(&webkitWebViewLoadURI, webkit, "webkit_web_view_load_uri")
+		purego.RegisterLibFunc(&webkitWebViewLoadHTML, webkit, "webkit_web_view_load_html")
+		purego.RegisterLibFunc(&webkitWebViewGetURI, webkit, "webkit_web_view_get_uri")
+		purego.RegisterLibFunc(&webkitUserContentManagerRegisterHandler, webkit, "webkit_user_content_manager_register_script_message_handler")
+		purego.RegisterLibFunc(&webkitUserContentManagerAddScript, webkit, "webkit_user_content_manager_add_script")
+		purego.RegisterLibFunc(&webkitUserContentManagerRemoveAllScripts, webkit, "webkit_user_content_manager_remove_all_scripts")
+		purego.RegisterLibFunc(&webkitUserScriptNew, webkit, "webkit_user_script_new")
+		purego.RegisterLibFunc(&webkitUserScriptUnref, webkit, "webkit_user_script_unref")
+		purego.RegisterLibFunc(&webkitJavascriptResultGetJSValue, webkit, "webkit_javascript_result_get_js_value")
+
+		if _, e := purego.Dlsym(webkit, "webkit_web_view_evaluate_javascript"); e == nil {
+			purego.RegisterLibFunc(&webkitWebViewEvaluateJavascript, webkit, "webkit_web_view_evaluate_javascript")
+			haveEvaluateJavascript = true
+		} else {
+			purego.RegisterLibFunc(&webkitWebViewRunJavascript, webkit, "webkit_web_view_run_javascript")
+		}
+
+		purego.RegisterLibFunc(&jscValueToString, jsc, "jsc_value_to_string")
+
+		dispatchSourceFn = purego.NewCallback(func(data uintptr) uintptr {
+			dispatchMu.Lock()
+			f := dispatchMap[data]
+			delete(dispatchMap, data)
+			dispatchMu.Unlock()
+			if f != nil {
+				f()
+			}
+			return gSourceRemove
+		})
+		messageHandlerFn = purego.NewCallback(func(manager, jsResult, userData uintptr) uintptr {
+			if w := lookupEngine(userData); w != nil {
+				w.onMessage(jsResultToString(jsResult))
+			}
+			return 0
+		})
+		windowDestroyFn = purego.NewCallback(func(widget, userData uintptr) uintptr {
+			if w := lookupEngine(userData); w != nil {
+				w.onWindowDestroy()
+			}
+			return 0
+		})
+	})
+	return initErr
+}
+
+// jsResultToString unwraps a WebKitJavascriptResult* (GTK3): get the JSCValue,
+// stringify it, copy to Go, and g_free the C string.
+func jsResultToString(jsResult uintptr) string {
+	value := webkitJavascriptResultGetJSValue(jsResult)
+	cs := jscValueToString(value)
+	s := cstr(cs)
+	if cs != 0 {
+		gFree(cs)
+	}
+	return s
+}
+
+func cstr(p uintptr) string {
+	if p == 0 {
+		return ""
+	}
+	ptr := *(*unsafe.Pointer)(unsafe.Pointer(&p))
+	var n int
+	for *(*byte)(unsafe.Add(ptr, n)) != 0 {
+		n++
+	}
+	return string(unsafe.Slice((*byte)(ptr), n))
+}
+
+// --- instance + dispatch registries ----------------------------------------
+
+var (
+	regMu     sync.Mutex
+	registry  = map[uintptr]*webview{}
+	engineSeq uintptr
+
+	dispatchMu  sync.Mutex
+	dispatchMap = map[uintptr]func(){}
+	dispatchSeq uintptr
+)
+
+func registerEngine(w *webview) uintptr {
+	regMu.Lock()
+	engineSeq++
+	id := engineSeq
+	registry[id] = w
+	regMu.Unlock()
+	return id
+}
+
+func unregisterEngine(id uintptr) {
+	regMu.Lock()
+	delete(registry, id)
+	regMu.Unlock()
+}
+
+func lookupEngine(id uintptr) *webview {
+	regMu.Lock()
+	defer regMu.Unlock()
+	return registry[id]
+}
+
+func dispatchMain(f func()) {
+	dispatchMu.Lock()
+	dispatchSeq++
+	id := dispatchSeq
+	dispatchMap[id] = f
+	dispatchMu.Unlock()
+	gIdleAddFull(gPriorityHighIdle, dispatchSourceFn, id, 0)
+}
+
+// --- webview ---------------------------------------------------------------
+
+// webview is the Linux implementation of the WebView interface.
+type webview struct {
+	id         uintptr
+	window     uintptr
+	webview    uintptr
+	manager    uintptr
+	ownsWindow bool
+
+	stopRunLoop   bool
+	isWindowShown bool
+	isSizeSet     bool
+
+	mu             sync.Mutex
+	bindings       map[string]func(id, req string) (any, error)
+	userScriptSrcs []string
+}
+
+// New creates a new window and a web view.
+func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
+
+// NewWindow creates a web view. If window is non-nil it must point to an
+// existing GtkWindow to embed into; otherwise a new window is created.
+//
+// The first successful call pins the calling goroutine to its OS thread.
+func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
+	if err := ensureInit(); err != nil {
+		return nil, err
+	}
+	uiThreadOnce.Do(runtime.LockOSThread)
+
+	w := &webview{
+		ownsWindow: true,
+		bindings:   map[string]func(id, req string) (any, error){},
+	}
+	w.id = registerEngine(w)
+	w.windowInit(uintptr(window))
+	w.windowSettings(debug)
+	return w, nil
+}
+
+func (w *webview) windowInit(window uintptr) {
+	if window != 0 {
+		w.window = window
+		w.ownsWindow = false
+	} else {
+		if !gtkInitCheck(0, 0) {
+			panic("webview: gtk_init_check failed")
+		}
+		w.window = gtkWindowNew(gtkWindowToplevel)
+		gSignalConnectData(w.window, "destroy", windowDestroyFn, w.id, 0, 0)
+	}
+
+	w.webview = webkitWebViewNew()
+	gObjectRefSink(w.webview)
+	w.manager = webkitWebViewGetUserContentManager(w.webview)
+
+	gSignalConnectData(w.manager, "script-message-received::__webview__",
+		messageHandlerFn, w.id, 0, 0)
+	webkitUserContentManagerRegisterHandler(w.manager, "__webview__")
+
+	w.pushUserScript(createInitScript(bridgePostFn))
+}
+
+func (w *webview) windowSettings(debug bool) {
+	settings := webkitWebViewGetSettings(w.webview)
+	webkitSettingsSetJavascriptCanAccessClipboard(settings, true)
+	if debug {
+		webkitSettingsSetEnableWriteConsoleToStdout(settings, true)
+		webkitSettingsSetEnableDeveloperExtras(settings, true)
+	}
+}
+
+func (w *webview) onWindowDestroy() {
+	w.window = 0
+	dispatchMain(func() { w.stopRunLoop = true })
+}
+
+func (w *webview) Run() {
+	w.stopRunLoop = false
+	for !w.stopRunLoop {
+		gMainContextIteration(0, true)
+	}
+}
+
+func (w *webview) Terminate() {
+	dispatchMain(func() { w.stopRunLoop = true })
+}
+
+func (w *webview) Dispatch(f func()) { dispatchMain(f) }
+
+func (w *webview) Window() unsafe.Pointer {
+	p := w.window
+	return *(*unsafe.Pointer)(unsafe.Pointer(&p))
+}
+
+func (w *webview) Destroy() {
+	if w.window != 0 && w.ownsWindow {
+		// g_signal_handlers_disconnect_by_data is a macro -> _disconnect_matched.
+		gSignalHandlersDisconnectMatched(w.window, gSignalMatchData, 0, 0, 0, 0, w.id)
+		gtkWindowClose(w.window)
+		w.window = 0
+	}
+	if w.webview != 0 {
+		gObjectUnref(w.webview)
+		w.webview = 0
+	}
+	unregisterEngine(w.id)
+	if w.ownsWindow {
+		done := false
+		dispatchMain(func() { done = true })
+		for i := 0; i < 10000 && !done; i++ {
+			gMainContextIteration(0, true)
+		}
+	}
+}
+
+func (w *webview) SetTitle(title string) { gtkWindowSetTitle(w.window, title) }
+
+func (w *webview) SetSize(width, height int, hint Hint) {
+	gtkWindowSetResizable(w.window, hint != HintFixed)
+	switch hint {
+	case HintMin:
+		gtkWidgetSetSizeRequest(w.window, width, height)
+	case HintMax:
+		g := gdkGeometry{MaxWidth: int32(width), MaxHeight: int32(height)}
+		gtkWindowSetGeometryHints(w.window, 0, &g, gdkHintMaxSize)
+	default: // HintNone, HintFixed
+		gtkWindowResize(w.window, width, height)
+	}
+	w.isSizeSet = true
+	w.windowShow()
+}
+
+func (w *webview) Navigate(url string) {
+	if url == "" {
+		url = "about:blank"
+	}
+	webkitWebViewLoadURI(w.webview, url)
+}
+
+func (w *webview) SetHtml(html string) {
+	webkitWebViewLoadHTML(w.webview, html, 0)
+}
+
+func (w *webview) Init(js string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pushUserScript(js)
+}
+
+func (w *webview) Eval(js string) {
+	if w.webview == 0 {
+		return // web view destroyed (e.g. a late reply dispatched after Destroy).
+	}
+	if webkitWebViewGetURI(w.webview) == 0 {
+		return // URI is null before content has begun loading.
+	}
+	if haveEvaluateJavascript {
+		webkitWebViewEvaluateJavascript(w.webview, js, len(js), 0, 0, 0, 0, 0)
+	} else {
+		webkitWebViewRunJavascript(w.webview, js, 0, 0, 0)
+	}
+}
+
+func (w *webview) windowShow() {
+	if w.isWindowShown {
+		return
+	}
+	gtkContainerAdd(w.window, w.webview)
+	gtkWidgetShow(w.webview)
+	if w.ownsWindow {
+		gtkWidgetGrabFocus(w.webview)
+		gtkWidgetShow(w.window)
+	}
+	w.isWindowShown = true
+}
+
+func (w *webview) Bind(name string, f any) error {
+	wrapper, err := makeFuncWrapper(f)
+	if err != nil {
+		return err
+	}
+	w.mu.Lock()
+	if _, exists := w.bindings[name]; exists {
+		w.mu.Unlock()
+		return errors.New("function name already bound")
+	}
+	w.bindings[name] = wrapper
+	w.rebuildScriptsLocked()
+	w.mu.Unlock()
+	w.Eval(fmt.Sprintf("if(window.__webview__){window.__webview__.onBind(%s)}", marshalJSON(name)))
+	return nil
+}
+
+func (w *webview) Unbind(name string) error {
+	w.mu.Lock()
+	if _, exists := w.bindings[name]; !exists {
+		w.mu.Unlock()
+		return errors.New("function name not bound")
+	}
+	delete(w.bindings, name)
+	w.rebuildScriptsLocked()
+	w.mu.Unlock()
+	w.Eval(fmt.Sprintf("if(window.__webview__){window.__webview__.onUnbind(%s)}", marshalJSON(name)))
+	return nil
+}
+
+// --- user scripts + message routing ----------------------------------------
+
+func (w *webview) pushUserScript(src string) {
+	w.userScriptSrcs = append(w.userScriptSrcs, src)
+	w.rebuildScriptsLocked()
+}
+
+func (w *webview) rebuildScriptsLocked() {
+	if w.manager == 0 {
+		return
+	}
+	webkitUserContentManagerRemoveAllScripts(w.manager)
+	for _, src := range w.userScriptSrcs {
+		addUserScript(w.manager, src)
+	}
+	addUserScript(w.manager, createBindScript(w.bindingNamesLocked()))
+}
+
+func (w *webview) bindingNamesLocked() []string {
+	names := make([]string, 0, len(w.bindings))
+	for n := range w.bindings {
+		names = append(names, n)
+	}
+	return names
+}
+
+func addUserScript(manager uintptr, src string) {
+	script := webkitUserScriptNew(src, injectTopFrame, injectAtDocumentStart, 0, 0)
+	webkitUserContentManagerAddScript(manager, script)
+	webkitUserScriptUnref(script)
+}
+
+func (w *webview) onMessage(body string) {
+	var m struct {
+		ID     string          `json:"id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		return
+	}
+	w.mu.Lock()
+	fn := w.bindings[m.Method]
+	w.mu.Unlock()
+	if fn == nil {
+		return
+	}
+	go func() {
+		status, result := callAndMarshal(fn, m.ID, string(m.Params))
+		w.resolve(m.ID, status, result)
+	}()
+}
+
+func (w *webview) resolve(id string, status int, resultJSON string) {
+	js := fmt.Sprintf("window.__webview__.onReply(%s, %d, %s)",
+		marshalJSON(id), status, marshalJSON(resultJSON))
+	dispatchMain(func() { w.Eval(js) })
+}
