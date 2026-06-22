@@ -30,6 +30,11 @@ const (
 
 	gdkHintMaxSize   = 1 << 2 // GDK_HINT_MAX_SIZE
 	gSignalMatchData = 1 << 4 // G_SIGNAL_MATCH_DATA
+
+	// Default window size applied when the caller never calls SetSize, matching
+	// the macOS backend and webview's dispatch_size_default.
+	defaultWidth  = 640
+	defaultHeight = 480
 )
 
 // gdkGeometry mirrors the C GdkGeometry struct (passed by pointer for MAX hint).
@@ -381,6 +386,17 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 	w.id = registerEngine(w)
 	w.windowInit(uintptr(window))
 	w.windowSettings(debug)
+	if w.ownsWindow {
+		// Apply a default size (which also shows the window) unless the caller
+		// sets one first, mirroring the macOS backend and webview's
+		// dispatch_size_default. Without this, New()->Navigate()->Run() with no
+		// SetSize would leave the window unrealized.
+		dispatchMain(func() {
+			if !w.isSizeSet {
+				w.SetSize(defaultWidth, defaultHeight, HintNone)
+			}
+		})
+	}
 	return w, nil
 }
 
@@ -417,6 +433,10 @@ func (w *webview) windowSettings(debug bool) {
 }
 
 func (w *webview) onWindowDestroy() {
+	// Closed via the OS: reclaim the engine registry entry so the webview is not
+	// pinned when Destroy() is never called. unregisterEngine is idempotent, so a
+	// later Destroy() is fine; signal callbacks resolve to nil and no-op.
+	unregisterEngine(w.id)
 	w.window = 0
 	dispatchMain(func() { w.stopRunLoop = true })
 }

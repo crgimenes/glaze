@@ -263,6 +263,10 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 		destroyWindow(hwnd)
 		return 0
 	case wmDestroy:
+		// Closed via the OS: reclaim the engine registry entry so the webview is
+		// not pinned when Destroy() is never called. unregisterEngine is
+		// idempotent, so a later Destroy() is fine.
+		unregisterEngine(id)
 		w.window = 0
 		setWindowLongPtrW(hwnd, gwlpUserData, 0)
 		return 0
