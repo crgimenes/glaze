@@ -21,6 +21,7 @@ var (
 	resWinErrorUnbind atomic.Value // string
 	resWinRichTypes   atomic.Value // string
 	resWinEmbed       atomic.Value // string
+	resWinClose       atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -29,7 +30,33 @@ func TestMain(m *testing.M) {
 	resWinErrorUnbind.Store(winErrorUnbindScenario())
 	resWinRichTypes.Store(winRichTypesScenario())
 	resWinEmbed.Store(winEmbedScenario())
+	resWinClose.Store(winCloseViaUIScenario()) // last: it ends with WM_QUIT
 	os.Exit(m.Run())
+}
+
+// winCloseViaUIScenario simulates the user closing the window (WM_CLOSE, as the
+// X button / Alt+F4 send) and asserts that Run() returns. Without the WM_CLOSE
+// -> PostQuitMessage path, Run would block forever, so a watchdog distinguishes
+// "Run ended because of the close" from "Run had to be force-terminated".
+func winCloseViaUIScenario() string {
+	w, err := New(false)
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	defer w.Destroy()
+	hwnd := w.(*webview).window
+
+	var watchdogFired atomic.Bool
+	time.AfterFunc(2*time.Second, func() { postMessageW(hwnd, wmClose, 0, 0) })
+	time.AfterFunc(40*time.Second, func() { watchdogFired.Store(true); w.Terminate() })
+
+	w.SetHtml(`<!DOCTYPE html><html><body>close test</body></html>`)
+	w.Run() // must return once WM_CLOSE posts WM_QUIT
+
+	if watchdogFired.Load() {
+		return "hung (WM_CLOSE did not end Run)"
+	}
+	return "closed"
 }
 
 // winEmbedScenario embeds a web view into a caller-provided HWND and verifies
@@ -65,6 +92,12 @@ func winEmbedScenario() string {
 func TestEmbedExternalWindow(t *testing.T) {
 	if got, _ := resWinEmbed.Load().(string); got != "embed-ok" {
 		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
+	}
+}
+
+func TestCloseViaUI(t *testing.T) {
+	if got, _ := resWinClose.Load().(string); got != "closed" {
+		t.Fatalf("close via UI = %q, want %q", got, "closed")
 	}
 }
 
