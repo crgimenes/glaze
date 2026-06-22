@@ -28,6 +28,11 @@ jobs:
           fi
       - run: go build ./...
       - run: go vet ./...
+      # Ubuntu 24.04 restricts unprivileged user namespaces by default, which
+      # WebKitGTK's bubblewrap sandbox (used by the GTK4/webkitgtk-6.0 network
+      # process) needs. Relax it so the WebProcess can launch under xvfb.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Test (xvfb)
         env:
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
