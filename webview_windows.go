@@ -72,19 +72,21 @@ var (
 	setWindowPos      func(hwnd, after uintptr, x, y, w, h int32, flags uint32) int32
 )
 
+// wndClassExW mirrors WNDCLASSEXW. The blank fields are left zero and unread by
+// Go but kept so the struct's size/layout match what RegisterClassExW expects.
 type wndClassExW struct {
 	cbSize        uint32
-	style         uint32
+	_             uint32 // style
 	lpfnWndProc   uintptr
-	cbClsExtra    int32
-	cbWndExtra    int32
+	_             int32 // cbClsExtra
+	_             int32 // cbWndExtra
 	hInstance     uintptr
-	hIcon         uintptr
-	hCursor       uintptr
-	hbrBackground uintptr
-	lpszMenuName  *uint16
+	_             uintptr // hIcon
+	_             uintptr // hCursor
+	_             uintptr // hbrBackground
+	_             *uint16 // lpszMenuName
 	lpszClassName *uint16
-	hIconSm       uintptr
+	_             uintptr // hIconSm
 }
 
 type point struct{ X, Y int32 }
@@ -100,15 +102,17 @@ type minMaxInfo struct {
 	ptMaxTrackSize point
 }
 
+// msgStruct mirrors MSG. Only message is read by Go; the blank fields are filled
+// by GetMessage and kept for the struct's C layout.
 type msgStruct struct {
-	hwnd     uintptr
-	message  uint32
-	_        uint32
-	wParam   uintptr
-	lParam   uintptr
-	time     uint32
-	pt       point
-	lPrivate uint32
+	_       uintptr // hwnd
+	message uint32
+	_       uint32  // padding after message
+	_       uintptr // wParam
+	_       uintptr // lParam
+	_       uint32  // time
+	_       point   // pt
+	_       uint32  // lPrivate
 }
 
 var (
@@ -187,10 +191,6 @@ var (
 	registry  = map[uintptr]*webview{}
 	engineSeq uintptr
 
-	dispatchMu  sync.Mutex
-	dispatchMap = map[uintptr]func(){}
-	dispatchSeq uintptr
-
 	uiThreadOnce sync.Once
 )
 
@@ -237,10 +237,10 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 
 	switch msg {
 	case wmApp:
-		dispatchMu.Lock()
-		f := dispatchMap[lp]
-		delete(dispatchMap, lp)
-		dispatchMu.Unlock()
+		w.dispatchMu.Lock()
+		f := w.dispatchMap[lp]
+		delete(w.dispatchMap, lp)
+		w.dispatchMu.Unlock()
 		if f != nil {
 			f()
 		}
@@ -308,6 +308,13 @@ type webview struct {
 	// can remove and rebuild them (matching the macOS/Linux backends).
 	userScriptSrcs     []string
 	installedScriptIDs []string
+
+	// Per-engine Dispatch queue: closures posted via WM_APP, keyed by an integer
+	// id (no Go pointer crosses to C). Per-engine so Destroy can drop any pending
+	// closures instead of leaking them in a shared global map.
+	dispatchMu  sync.Mutex
+	dispatchMap map[uintptr]func()
+	dispatchSeq uintptr
 }
 
 var classNamePtr = utf16("glaze_webview")
@@ -318,7 +325,9 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 // NewWindow creates a web view. If window is non-nil it must be an existing
 // HWND to embed into; otherwise a new window is created and owned by this
 // WebView. The first successful call pins the calling goroutine to its OS
-// thread.
+// thread; create and drive every WebView from that same goroutine, because the
+// WebView2 COM apartment and the message pump are thread-bound (use Dispatch to
+// re-enter that thread from background goroutines).
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 	if err := ensureWinInit(); err != nil {
 		return nil, err
@@ -326,8 +335,9 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 	uiThreadOnce.Do(runtime.LockOSThread)
 
 	w := &webview{
-		ownsWindow: window == nil,
-		bindings:   map[string]func(id, req string) (any, error){},
+		ownsWindow:  window == nil,
+		bindings:    map[string]func(id, req string) (any, error){},
+		dispatchMap: map[uintptr]func(){},
 	}
 	w.id = registerEngine(w)
 	w.hinst = getModuleHandleW(0)
@@ -379,12 +389,17 @@ func (w *webview) Terminate() {
 }
 
 func (w *webview) Dispatch(f func()) {
-	dispatchMu.Lock()
-	dispatchSeq++
-	id := dispatchSeq
-	dispatchMap[id] = f
-	dispatchMu.Unlock()
-	postMessageW(w.window, wmApp, 0, id)
+	w.dispatchMu.Lock()
+	w.dispatchSeq++
+	id := w.dispatchSeq
+	w.dispatchMap[id] = f
+	w.dispatchMu.Unlock()
+	if postMessageW(w.window, wmApp, 0, id) == 0 {
+		// The window is already gone: reclaim the entry rather than leak it.
+		w.dispatchMu.Lock()
+		delete(w.dispatchMap, id)
+		w.dispatchMu.Unlock()
+	}
 }
 
 func (w *webview) Window() unsafe.Pointer {
@@ -437,5 +452,10 @@ func (w *webview) Destroy() {
 		destroyWindow(w.window)
 		w.window = 0
 	}
+	// Drop any Dispatch closures that were queued but never delivered (their
+	// WM_APP messages die with the window), instead of leaking them.
+	w.dispatchMu.Lock()
+	w.dispatchMap = map[uintptr]func(){}
+	w.dispatchMu.Unlock()
 	unregisterEngine(w.id)
 }
