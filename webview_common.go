@@ -24,6 +24,11 @@ const (
 	HintFixed
 )
 
+// WebView is the cross-platform handle returned by New and NewWindow. Its
+// methods drive the native window and the embedded web view. Unless a method's
+// own documentation says otherwise, call them from the UI thread (the goroutine
+// that created the first window), and use Dispatch to re-enter that thread from
+// background goroutines.
 type WebView interface {
 	// Run runs the main loop until it's terminated. After this function exits -
 	// you must destroy the webview.

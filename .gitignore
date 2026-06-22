@@ -1,0 +1,31 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.*
+
+# Compiled example binaries (go build ./examples/<name> drops these at the root)
+/appwindow
+/bind
+/desktop
+/doomfire
+/fallingsand
+/filepicker
+/filorepl
+/gameoflife
+/mandelbrot
+/raycasting
+/simple
+/starfield
+/zero_tcp
+
+.DS_Store
+dist/
