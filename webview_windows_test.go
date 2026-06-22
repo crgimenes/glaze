@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 // The WebView2/COM backend runs on one OS thread, so the GUI scenarios run in
@@ -19,6 +20,7 @@ var (
 	resWinBridge      atomic.Value // string
 	resWinErrorUnbind atomic.Value // string
 	resWinRichTypes   atomic.Value // string
+	resWinEmbed       atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -26,7 +28,44 @@ func TestMain(m *testing.M) {
 	resWinBridge.Store(winBridgeScenario())
 	resWinErrorUnbind.Store(winErrorUnbindScenario())
 	resWinRichTypes.Store(winRichTypesScenario())
+	resWinEmbed.Store(winEmbedScenario())
 	os.Exit(m.Run())
+}
+
+// winEmbedScenario embeds a web view into a caller-provided HWND and verifies
+// the engine does not take ownership and Destroy leaves the host window intact.
+func winEmbedScenario() string {
+	if err := ensureWinInit(); err != nil {
+		return "init error: " + err.Error()
+	}
+	host := createWindowExW(0, utf16("STATIC"), utf16("host"), wsOverlappedWindow,
+		cwUseDefault, cwUseDefault, 320, 240, 0, 0, getModuleHandleW(0), 0)
+	if host == 0 {
+		return "host window nil"
+	}
+	hostPtr := *(*unsafe.Pointer)(unsafe.Pointer(&host))
+	w, err := NewWindow(false, hostPtr)
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	owns := w.(*webview).ownsWindow
+	w.Destroy()
+	// A valid window still returns its style; a destroyed HWND returns 0.
+	alive := getWindowLongPtrW(host, gwlStyle) != 0
+	destroyWindow(host)
+	if owns {
+		return "owns=true (BUG: should not own external window)"
+	}
+	if !alive {
+		return "host destroyed (BUG)"
+	}
+	return "embed-ok"
+}
+
+func TestEmbedExternalWindow(t *testing.T) {
+	if got, _ := resWinEmbed.Load().(string); got != "embed-ok" {
+		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
+	}
 }
 
 func winBridgeScenario() string {
