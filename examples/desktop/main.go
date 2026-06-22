@@ -23,7 +23,6 @@ import (
 	"github.com/crgimenes/devengine/assets"
 	"github.com/crgimenes/devengine/db/sqlite"
 	"github.com/crgimenes/glaze"
-	_ "github.com/crgimenes/glaze/embedded"
 )
 
 // NoteService wraps devengine's SQLite to provide note CRUD operations.

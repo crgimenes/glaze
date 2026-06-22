@@ -9,7 +9,6 @@ import (
 	"net/http"
 
 	"github.com/crgimenes/glaze"
-	_ "github.com/crgimenes/glaze/embedded"
 )
 
 //go:embed ui/index.html ui/app.css ui/app.js

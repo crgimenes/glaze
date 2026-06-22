@@ -25,7 +25,6 @@ import (
 	"github.com/crgimenes/filo/filorand"
 	"github.com/crgimenes/filo/filostrings"
 	"github.com/crgimenes/glaze"
-	_ "github.com/crgimenes/glaze/embedded"
 )
 
 // FiloService wraps a Filo engine and maintains REPL state.
