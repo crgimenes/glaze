@@ -129,7 +129,7 @@ func TestRemoveUnixSocketRejectsRegularFile(t *testing.T) {
 	if err := tmp.Close(); err != nil {
 		t.Fatalf("Close() unexpected error: %v", err)
 	}
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 
 	err = removeUnixSocket(path)
 	if err == nil {

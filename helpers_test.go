@@ -91,6 +91,7 @@ func (bindMethodsService) GetUserByID(_ int) int { return 1 }
 
 func (bindMethodsService) Ping() {}
 
+//nolint:unused // present to verify BindMethods skips unexported methods
 func (bindMethodsService) hidden() {}
 
 func TestBindMethods(t *testing.T) {
