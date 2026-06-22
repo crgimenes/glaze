@@ -20,7 +20,6 @@ import (
 
 	"github.com/crgimenes/devengine/assets"
 	"github.com/crgimenes/glaze"
-	_ "github.com/crgimenes/glaze/embedded"
 )
 
 // pageData is passed to every template — mirrors the pattern used in edev/rpgstudios.

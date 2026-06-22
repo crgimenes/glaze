@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/crgimenes/glaze"
-	_ "github.com/crgimenes/glaze/embedded"
 )
 
 const html = `<!doctype html>

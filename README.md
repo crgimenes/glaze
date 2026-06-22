@@ -1,18 +1,18 @@
 # Glaze
 
-Glaze is a desktop WebView binding for Go. It sits on top of [webview/webview](https://github.com/webview/webview) and [purego](https://github.com/ebitengine/purego) to keep CGo out of the picture.
+Glaze is a desktop WebView binding for Go. It is a pure-Go port of [webview/webview](https://github.com/webview/webview) built on [purego](https://github.com/ebitengine/purego), keeping CGo out of the picture. Each backend talks to the WebView framework the OS already ships -- WKWebView on macOS, WebKitGTK on Linux, WebView2 on Windows -- so nothing native is bundled.
 
 It started as a fork of `go-webview` but has diverged enough to live as a separate codebase with its own goals and API.
 
 ## Why no CGo
 
-Dragging a C toolchain into a Go project just to open a window with HTML breaks too much of what I like about the Go ecosystem -- easy cross-compilation, reproducible builds, `go install` that works for whoever clones the repo. With `purego` the native library is loaded at runtime via dlopen / LoadLibrary, and the binary ships everything embedded.
+Dragging a C toolchain into a Go project just to open a window with HTML breaks too much of what I like about the Go ecosystem -- easy cross-compilation, reproducible builds, `go install` that works for whoever clones the repo. With `purego` glaze calls the WebView framework already present on the system via dlopen / LoadLibrary, so the binary stays self-contained with no C toolchain and no bundled native library.
 
 ## What's in the box
 
 - No CGo
 - Windows, macOS, and Linux
-- Native libraries embedded in the binary, extracted at runtime with BLAKE2b-256 integrity verification
+- Zero bundled native libraries -- binds the OS WebView directly (WKWebView / WebKitGTK / WebView2)
 - JavaScript to Go binding
 - Helpers for common desktop patterns: `BindMethods`, `RenderHTML`, `AppWindow`
 - Plays nicely with `go.work` multi-module setups
@@ -37,11 +37,13 @@ Dragging a C toolchain into a Go project just to open a window with HTML breaks 
 go get github.com/crgimenes/glaze@latest
 ```
 
-To use the embedded native libraries:
+## Requirements
 
-```go
-import _ "github.com/crgimenes/glaze/embedded"
-```
+Glaze binds the WebView the operating system already provides; there is nothing to bundle, but that runtime must be present:
+
+- **macOS** -- nothing extra. The Cocoa/WebKit frameworks ship with the OS.
+- **Linux** -- a system WebKitGTK: GTK4 `libwebkitgtk-6.0` *or* GTK3 `libwebkit2gtk-4.1` / `4.0` (e.g. `apt install libwebkit2gtk-4.1-0`). Glaze detects which is installed at runtime.
+- **Windows** -- the Microsoft Edge WebView2 Runtime (preinstalled on current Windows 10/11; otherwise install the Evergreen Runtime). It is located via the registry, and `New` returns an error if it is missing.
 
 ## Hello world
 
@@ -52,7 +54,6 @@ import (
 	"log"
 
 	"github.com/crgimenes/glaze"
-	_ "github.com/crgimenes/glaze/embedded"
 )
 
 func main() {
@@ -178,7 +179,7 @@ go test ./...
 GUI integration test:
 
 ```bash
-go test -tags=integration -run TestWebview ./...
+go test -tags=integration -run TestWebview .
 ```
 
 ## Building on Windows
@@ -191,57 +192,17 @@ go build -ldflags="-H windowsgui" .
 
 ## Project layout
 
-- `webview.go` -- core API and binding internals
+- `webview_common.go` -- the `WebView` interface, function-wrapper, and JS marshalling
+- `webview_bridge.go` / `webview_bridge_webkit.go` -- the injected JS bridge (init/bind scripts)
+- `webview_darwin.go` / `webview_linux.go` / `webview_windows.go` (+ `webview2_windows.go`, `putbounds_amd64.go`, `putbounds_arm64.go`) -- the per-OS pure-Go backends
 - `appwindow.go` -- desktop window + local HTTP server helper
 - `helpers.go` -- utility helpers (`BindMethods`, `RenderHTML`)
-- `embedded/` -- embedded native library assets per platform
-- `examples/` -- runnable sample applications
+- `examples/` -- runnable sample applications (their own Go module)
 
-## Library integrity verification
-
-Glaze embeds native libraries and extracts them to disk before loading. By default the extraction target is a temp directory that may be writable by other processes -- which would let an attacker swap the library file.
-
-To handle that, Glaze computes a BLAKE2b-256 hash of the embedded library bytes at runtime and verifies every extracted (or pre-existing) file against that hash before loading. If the hash doesn't match, extraction fails with an integrity error and the library is **not** loaded.
-
-Extracted files get restricted permissions (`0500`, owner read+execute) inside a `0700` directory.
-
-### Custom library directory
-
-In production, use `ExtractTo` to place the library in a secure, application-controlled directory instead of the system temp:
-
-```go
-package main
-
-import (
-	"log"
-
-	"github.com/crgimenes/glaze"
-	"github.com/crgimenes/glaze/embedded"
-)
-
-func main() {
-	// Extract to a directory with restricted access.
-	if err := embedded.ExtractTo("/opt/myapp/lib"); err != nil {
-		log.Fatal(err)
-	}
-
-	w, err := glaze.New(true)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer w.Destroy()
-
-	w.SetTitle("Secure App")
-	w.SetSize(800, 600, glaze.HintNone)
-	w.SetHtml("<h1>Hello</h1>")
-	w.Run()
-}
-```
-
-When using `ExtractTo`, **don't** also `import _ "github.com/crgimenes/glaze/embedded"` -- the blank import fires `init()` which extracts to the default temp directory. Call `ExtractTo` explicitly instead.
+Glaze loads the OS WebView framework directly and bundles or extracts no native library, so there is no extracted file to verify or swap.
 
 ## Acknowledgments
 
 - [abemedia/go-webview](https://github.com/abemedia/go-webview) for the original Go binding base
-- [webview/webview](https://github.com/webview/webview) for the native WebView implementation
+- [webview/webview](https://github.com/webview/webview) for the original C++ WebView implementation this is ported from
 - [purego](https://github.com/ebitengine/purego) for dynamic linking without CGo

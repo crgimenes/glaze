@@ -4,7 +4,6 @@ import (
 	"log"
 
 	"github.com/crgimenes/glaze"
-	_ "github.com/crgimenes/glaze/embedded"
 )
 
 func main() {
