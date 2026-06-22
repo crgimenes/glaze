@@ -6,19 +6,23 @@ import (
 	"errors"
 	"os"
 	"runtime"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 )
 
-// The GTK backend runs on one OS thread, so the GUI scenarios run in TestMain
-// (the main goroutine) and stash results; the TestXxx functions only assert.
-// Needs an X display — run under xvfb-run on CI.
+// AppKit runs on one OS thread, so the GUI scenarios run in TestMain (the main
+// goroutine) and stash results; the TestXxx functions only assert. The macOS CI
+// runner has a window server, so no virtual display is needed.
 
 var (
 	resBridge      atomic.Value // string
 	resErrorUnbind atomic.Value // string
 	resRichTypes   atomic.Value // string
+	resMultiWindow atomic.Value // string
+	resEmbed       atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -26,7 +30,70 @@ func TestMain(m *testing.M) {
 	resBridge.Store(bridgeScenario())
 	resErrorUnbind.Store(errorUnbindScenario())
 	resRichTypes.Store(richTypesScenario())
+	resMultiWindow.Store(multiWindowScenario())
+	resEmbed.Store(embedScenario())
 	os.Exit(m.Run())
+}
+
+// multiWindowScenario verifies window ref-count bookkeeping across two engines
+// and that full Destroy returns the count to its baseline (no run loop needed).
+func multiWindowScenario() string {
+	start := atomic.LoadInt32(&windowCount)
+	w1, err := New(false)
+	if err != nil {
+		return "w1 error: " + err.Error()
+	}
+	w2, err := NewWindow(false, nil)
+	if err != nil {
+		return "w2 error: " + err.Error()
+	}
+	peak := atomic.LoadInt32(&windowCount)
+	w1.Destroy()
+	w2.Destroy()
+	end := atomic.LoadInt32(&windowCount)
+	return strconv.Itoa(int(start)) + "->" + strconv.Itoa(int(peak)) + "->" + strconv.Itoa(int(end))
+}
+
+// embedScenario embeds a web view into a caller-provided NSWindow and verifies
+// the engine does not take ownership and Destroy leaves the host window intact.
+func embedScenario() string {
+	host := class("NSWindow").Send(sel("alloc"))
+	host = host.Send(sel("initWithContentRect:styleMask:backing:defer:"),
+		cgRect{cgPoint{0, 0}, cgSize{400, 300}},
+		uint(nsWindowStyleMaskTitled), nsBackingStoreBuffered, false)
+	host = host.Send(sel("retain"))
+
+	hostPtr := *(*unsafe.Pointer)(unsafe.Pointer(&host)) // objc.ID -> unsafe.Pointer
+	w, err := NewWindow(false, hostPtr)
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	owns := w.(*webview).ownsWindow // concrete type (same package)
+	w.Destroy()
+
+	// Host must still be alive after Destroy (this would crash on a released
+	// object), then tear it down ourselves.
+	host.Send(sel("setTitle:"), nsstr("still alive"))
+	host.Send(sel("close"))
+	host.Send(sel("release"))
+
+	if owns {
+		return "owns=true (BUG: should not own external window)"
+	}
+	return "embed-ok"
+}
+
+func TestMultiWindowRefCount(t *testing.T) {
+	const want = "0->2->0"
+	if got, _ := resMultiWindow.Load().(string); got != want {
+		t.Fatalf("window ref-count = %q, want %q", got, want)
+	}
+}
+
+func TestEmbedExternalWindow(t *testing.T) {
+	if got, _ := resEmbed.Load().(string); got != "embed-ok" {
+		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
+	}
 }
 
 func bridgeScenario() string {
