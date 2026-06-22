@@ -469,6 +469,14 @@ func (w *webview) onWindowWillClose() {
 }
 
 func (w *webview) onWindowDestroyed(skipTermination bool) {
+	if !skipTermination && w.windowDelegate != 0 {
+		// Closed via the OS, not Destroy(): drop the delegate->engine mapping so
+		// the webview is not pinned in the registry when Destroy() is never
+		// called. The objc object is still released by a later Destroy() if any
+		// (the map delete is idempotent); a stray delegate callback resolves to
+		// nil and no-ops.
+		unregisterInstance(w.windowDelegate)
+	}
 	if decWindowCount() <= 0 && !skipTermination {
 		w.Terminate()
 	}
@@ -485,8 +493,12 @@ func isAppBundled() bool {
 
 // --- public API (WebView interface) ----------------------------------------
 
-func (w *webview) Run()       { w.app.Send(sel("run")) }
-func (w *webview) Terminate() { w.stopRunLoop() }
+func (w *webview) Run() { w.app.Send(sel("run")) }
+
+// Terminate stops the run loop. Per the WebView contract it is safe to call from
+// a background thread, so the AppKit calls in stopRunLoop are routed to the main
+// thread (bindings run on goroutines), matching the Linux/Windows backends.
+func (w *webview) Terminate() { dispatchMain(w.stopRunLoop) }
 
 func (w *webview) Dispatch(f func()) { dispatchMain(f) }
 
