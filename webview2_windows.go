@@ -540,8 +540,17 @@ func regReadString(root uintptr, subkey, name string) (string, error) {
 	return string(utf16Decode(u16)), nil
 }
 
-// createEnvironment loads the discovered runtime DLL and calls its private
-// CreateWebViewEnvironmentWithOptionsInternal export (the built-in loader path).
+// createEnvironment loads the discovered runtime DLL and calls its
+// CreateWebViewEnvironmentWithOptionsInternal export.
+//
+// Trade-off (deliberate): this is the internal/undocumented export that
+// WebView2Loader.dll itself wraps, and calling it directly is what lets glaze
+// bundle ZERO native DLLs. Microsoft documents that it may change or be removed,
+// and that the stable, supported entry point is
+// CreateCoreWebView2EnvironmentWithOptions -- but that one is only exported by
+// WebView2Loader.dll, which would have to be shipped alongside the binary. glaze
+// favors the zero-DLL design; if a future Edge runtime drops this export, the
+// GetProcAddress below fails with a clear error rather than misbehaving.
 func createEnvironment(userDataDir string, envHandler *comHandler) error {
 	dll, err := findEmbeddedBrowserDLL()
 	if err != nil {
@@ -555,7 +564,9 @@ func createEnvironment(userDataDir string, envHandler *comHandler) error {
 	}
 	addr, err := syscall.GetProcAddress(mod, "CreateWebViewEnvironmentWithOptionsInternal")
 	if err != nil {
-		return fmt.Errorf("resolve CreateWebViewEnvironmentWithOptionsInternal: %w", err)
+		// This internal export is how glaze avoids bundling WebView2Loader.dll; an
+		// incompatible/too-new Edge runtime that renamed or removed it lands here.
+		return fmt.Errorf("resolve CreateWebViewEnvironmentWithOptionsInternal (internal WebView2 loader export; installed Edge runtime may be incompatible): %w", err)
 	}
 	// HRESULT(bool, webview2_runtime_type, PCWSTR userDataDir, IUnknown* options,
 	//         ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler*)
