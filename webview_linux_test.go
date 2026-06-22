@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 // The GTK backend runs on one OS thread, so the GUI scenarios run in TestMain
@@ -19,6 +20,7 @@ var (
 	resBridge      atomic.Value // string
 	resErrorUnbind atomic.Value // string
 	resRichTypes   atomic.Value // string
+	resEmbed       atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -26,7 +28,44 @@ func TestMain(m *testing.M) {
 	resBridge.Store(bridgeScenario())
 	resErrorUnbind.Store(errorUnbindScenario())
 	resRichTypes.Store(richTypesScenario())
+	resEmbed.Store(embedScenario())
 	os.Exit(m.Run())
+}
+
+// embedScenario embeds a web view into a caller-provided GtkWindow and verifies
+// the engine does not take ownership and Destroy leaves the host window intact.
+func embedScenario() string {
+	if err := ensureInit(); err != nil {
+		return "init error: " + err.Error()
+	}
+	if !gtkInit() {
+		return "gtk_init failed"
+	}
+	host := gtkNewWindow()
+	if host == 0 {
+		return "host window nil"
+	}
+	hostPtr := *(*unsafe.Pointer)(unsafe.Pointer(&host))
+	w, err := NewWindow(false, hostPtr)
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	owns := w.(*webview).ownsWindow
+	w.Destroy()
+	// Host must still be alive after Destroy (this call would fault on a freed
+	// widget), then tear it down ourselves.
+	gtkWindowSetTitle(host, "still alive")
+	gtkWindowClose(host)
+	if owns {
+		return "owns=true (BUG: should not own external window)"
+	}
+	return "embed-ok"
+}
+
+func TestEmbedExternalWindow(t *testing.T) {
+	if got, _ := resEmbed.Load().(string); got != "embed-ok" {
+		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
+	}
 }
 
 func bridgeScenario() string {

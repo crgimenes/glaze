@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/ebitengine/purego/objc"
 )
 
 // AppKit runs on one OS thread, so the GUI scenarios run in TestMain (the main
@@ -23,6 +25,7 @@ var (
 	resRichTypes   atomic.Value // string
 	resMultiWindow atomic.Value // string
 	resEmbed       atomic.Value // string
+	resOpenPanel   atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -32,7 +35,33 @@ func TestMain(m *testing.M) {
 	resRichTypes.Store(richTypesScenario())
 	resMultiWindow.Store(multiWindowScenario())
 	resEmbed.Store(embedScenario())
+	resOpenPanel.Store(openPanelCompletionScenario())
 	os.Exit(m.Run())
+}
+
+// openPanelCompletionScenario exercises the WKUIDelegate file-chooser
+// completion path (invokeOpenPanelCompletion / NSInvocation "v@?@") without
+// presenting the modal panel, by invoking it with a Go block and a cancelled
+// (nil) selection. The full panel UI is exercised manually via
+// examples/filepicker.
+func openPanelCompletionScenario() string {
+	done := make(chan objc.ID, 1)
+	block := objc.NewBlock(func(_ objc.Block, urls objc.ID) {
+		select {
+		case done <- urls:
+		default:
+		}
+	})
+	invokeOpenPanelCompletion(objc.ID(uintptr(block)), 0)
+	select {
+	case urls := <-done:
+		if urls != 0 {
+			return "urls=nonnil (want nil for cancel)"
+		}
+		return "panel-ok"
+	case <-time.After(2 * time.Second):
+		return "completion handler not invoked"
+	}
 }
 
 // multiWindowScenario verifies window ref-count bookkeeping across two engines
@@ -93,6 +122,12 @@ func TestMultiWindowRefCount(t *testing.T) {
 func TestEmbedExternalWindow(t *testing.T) {
 	if got, _ := resEmbed.Load().(string); got != "embed-ok" {
 		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
+	}
+}
+
+func TestOpenPanelCompletion(t *testing.T) {
+	if got, _ := resOpenPanel.Load().(string); got != "panel-ok" {
+		t.Fatalf("open-panel completion = %q, want %q", got, "panel-ok")
 	}
 }
 
