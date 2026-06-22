@@ -182,15 +182,15 @@ func setupAppTransport(opts AppOptions) (appTransportSetup, error) {
 }
 
 func resolveAppTransport(requested AppTransport, goos string) (AppTransport, error) {
-	switch {
-	case requested == "" || requested == AppTransportAuto:
+	switch requested {
+	case "", AppTransportAuto:
 		if goos == "windows" {
 			return AppTransportTCP, nil
 		}
 		return AppTransportUnix, nil
-	case requested == AppTransportTCP:
+	case AppTransportTCP:
 		return AppTransportTCP, nil
-	case requested == AppTransportUnix:
+	case AppTransportUnix:
 		if goos == "windows" {
 			return "", errors.New("webview: unix transport is not supported on windows")
 		}
