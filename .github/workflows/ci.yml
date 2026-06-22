@@ -49,4 +49,10 @@ jobs:
           go-version: '1.26'
       - run: go build ./...
       - run: go vet ./...
-      - run: go test ./...
+      # windows-latest ships the Edge WebView2 Runtime; the test opens a real
+      # WebView2 window and exercises the JS<->Go bridge round trip.
+      - name: Test
+        timeout-minutes: 6
+        env:
+          WEBVIEW2_DEBUG: '1'
+        run: go test -timeout 180s .

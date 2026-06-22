@@ -2,11 +2,10 @@ package glaze
 
 import "strings"
 
-// bridgePostFn is the transport the injected bridge uses to reach Go: WebKit's
-// script message handler registered under the name "__webview__".
-const bridgePostFn = `function(message) {
-  return window.webkit.messageHandlers.__webview__.postMessage(message);
-}`
+// bridgePostFn (the transport the injected bridge uses to reach Go) is
+// platform-specific: WebKit message handlers on macOS/Linux, chrome.webview on
+// Windows. It is defined per backend (webview_bridge_webkit.go / the Windows
+// backend).
 
 // createInitScript returns the document-start bridge, ported from webview's
 // engine_base.hh create_init_script, so the JS API is identical to the native

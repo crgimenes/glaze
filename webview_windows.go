@@ -1,0 +1,387 @@
+// Windows WebView backend in pure Go via purego + the Win32 API.
+//
+// This file is the Win32 windowing layer (window class + WndProc via
+// purego.NewCallback, the GetMessage/Translate/Dispatch loop, WM_APP dispatch,
+// teardown). The WebView2/COM engine is in webview2_windows.go. Together they
+// reimplement webview's win32_edge.hh without cgo, so glaze needs no bundled
+// webview.dll on Windows.
+//
+// Safety choice (per the COM/Win32 risk review): no Go pointer is ever handed
+// across the C boundary. The engine is identified by an integer id passed via
+// CreateWindow's lpCreateParams, stashed in GWLP_USERDATA, and looked up in a
+// Go map; dispatched closures are keyed by an integer id passed via WM_APP's
+// LPARAM. Only integers cross into C. purego has no Dlopen on Windows, so procs
+// are resolved with syscall.LoadLibrary/GetProcAddress and bound via
+// purego.RegisterFunc; the WndProc uses purego.NewCallback.
+
+package glaze
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+	"syscall"
+	"unsafe"
+
+	"github.com/ebitengine/purego"
+)
+
+const (
+	cwUseDefault = ^int32(0x7fffffff) // 0x80000000 = CW_USEDEFAULT
+
+	wsOverlappedWindow = 0x00CF0000
+	wsThickFrame       = 0x00040000
+	wsMaximizeBox      = 0x00010000
+
+	swShow = 5
+
+	gwlpUserData = -21
+	gwlStyle     = -16
+
+	wmDestroy  = 0x0002
+	wmSize     = 0x0005
+	wmClose    = 0x0010
+	wmApp      = 0x8000
+	wmQuit     = 0x0012
+	wmNCCreate = 0x0081
+
+	swpNoZOrder   = 0x0004
+	swpNoActivate = 0x0010
+	swpNoMove     = 0x0002
+)
+
+// --- bound Win32 functions -------------------------------------------------
+
+var (
+	getModuleHandleW  func(name uintptr) uintptr
+	registerClassExW  func(wc *wndClassExW) uint16
+	createWindowExW   func(exStyle uint32, class, name *uint16, style uint32, x, y, w, h int32, parent, menu, inst, param uintptr) uintptr
+	defWindowProcW    func(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr
+	getMessageW       func(m *msgStruct, hwnd uintptr, min, max uint32) int32
+	translateMessage  func(m *msgStruct) int32
+	dispatchMessageW  func(m *msgStruct) uintptr
+	postQuitMessage   func(code int32)
+	postMessageW      func(hwnd uintptr, msg uint32, wp, lp uintptr) int32
+	showWindow        func(hwnd uintptr, cmd int32) int32
+	updateWindow      func(hwnd uintptr) int32
+	destroyWindow     func(hwnd uintptr) int32
+	setWindowLongPtrW func(hwnd uintptr, index int32, val uintptr) uintptr
+	getWindowLongPtrW func(hwnd uintptr, index int32) uintptr
+	setWindowTextW    func(hwnd uintptr, text *uint16) int32
+	setWindowPos      func(hwnd, after uintptr, x, y, w, h int32, flags uint32) int32
+)
+
+type wndClassExW struct {
+	cbSize        uint32
+	style         uint32
+	lpfnWndProc   uintptr
+	cbClsExtra    int32
+	cbWndExtra    int32
+	hInstance     uintptr
+	hIcon         uintptr
+	hCursor       uintptr
+	hbrBackground uintptr
+	lpszMenuName  *uint16
+	lpszClassName *uint16
+	hIconSm       uintptr
+}
+
+type point struct{ X, Y int32 }
+
+type msgStruct struct {
+	hwnd     uintptr
+	message  uint32
+	_        uint32
+	wParam   uintptr
+	lParam   uintptr
+	time     uint32
+	pt       point
+	lPrivate uint32
+}
+
+var (
+	winInitOnce sync.Once
+	winInitErr  error
+
+	wndProcCB uintptr // shared WndProc trampoline
+)
+
+func ensureWinInit() error {
+	winInitOnce.Do(func() {
+		user32, err := syscall.LoadLibrary("user32.dll")
+		if err != nil {
+			winInitErr = fmt.Errorf("webview: load user32.dll: %w", err)
+			return
+		}
+		kernel32, err := syscall.LoadLibrary("kernel32.dll")
+		if err != nil {
+			winInitErr = fmt.Errorf("webview: load kernel32.dll: %w", err)
+			return
+		}
+		reg := func(fn any, dll syscall.Handle, name string) {
+			if winInitErr != nil {
+				return
+			}
+			addr, e := syscall.GetProcAddress(dll, name)
+			if e != nil {
+				winInitErr = fmt.Errorf("webview: resolve %s: %w", name, e)
+				return
+			}
+			purego.RegisterFunc(fn, addr)
+		}
+		reg(&getModuleHandleW, kernel32, "GetModuleHandleW")
+		reg(&registerClassExW, user32, "RegisterClassExW")
+		reg(&createWindowExW, user32, "CreateWindowExW")
+		reg(&defWindowProcW, user32, "DefWindowProcW")
+		reg(&getMessageW, user32, "GetMessageW")
+		reg(&translateMessage, user32, "TranslateMessage")
+		reg(&dispatchMessageW, user32, "DispatchMessageW")
+		reg(&postQuitMessage, user32, "PostQuitMessage")
+		reg(&postMessageW, user32, "PostMessageW")
+		reg(&showWindow, user32, "ShowWindow")
+		reg(&updateWindow, user32, "UpdateWindow")
+		reg(&destroyWindow, user32, "DestroyWindow")
+		reg(&setWindowLongPtrW, user32, "SetWindowLongPtrW")
+		reg(&getWindowLongPtrW, user32, "GetWindowLongPtrW")
+		reg(&setWindowTextW, user32, "SetWindowTextW")
+		reg(&setWindowPos, user32, "SetWindowPos")
+		if winInitErr != nil {
+			return
+		}
+		wndProcCB = purego.NewCallback(wndProc)
+	})
+	return winInitErr
+}
+
+// utf16 returns a NUL-terminated UTF-16 pointer for s.
+func utf16(s string) *uint16 {
+	u := make([]uint16, 0, len(s)+1)
+	for _, r := range s {
+		if r < 0x10000 {
+			u = append(u, uint16(r))
+		} else {
+			r -= 0x10000
+			u = append(u, uint16(0xD800+(r>>10)), uint16(0xDC00+(r&0x3FF)))
+		}
+	}
+	u = append(u, 0)
+	return &u[0]
+}
+
+// --- engine registry (integer id <-> engine; no Go pointer crosses to C) ---
+
+var (
+	regMu     sync.Mutex
+	registry  = map[uintptr]*webview{}
+	engineSeq uintptr
+
+	dispatchMu  sync.Mutex
+	dispatchMap = map[uintptr]func(){}
+	dispatchSeq uintptr
+
+	uiThreadOnce sync.Once
+)
+
+func registerEngine(w *webview) uintptr {
+	regMu.Lock()
+	engineSeq++
+	id := engineSeq
+	registry[id] = w
+	regMu.Unlock()
+	return id
+}
+
+func unregisterEngine(id uintptr) {
+	regMu.Lock()
+	delete(registry, id)
+	regMu.Unlock()
+}
+
+func lookupEngine(id uintptr) *webview {
+	regMu.Lock()
+	defer regMu.Unlock()
+	return registry[id]
+}
+
+// wndProc is the single window procedure for all engine windows. It recovers
+// the engine via the integer id stored in GWLP_USERDATA (seeded in WM_NCCREATE
+// from lpCreateParams).
+func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
+	var id uintptr
+	if msg == wmNCCreate {
+		// lp -> CREATESTRUCTW; lpCreateParams is the first field (offset 0).
+		// Reinterpret the LPARAM bits as a pointer without a direct
+		// uintptr->Pointer conversion (keeps go vet happy).
+		cs := *(*unsafe.Pointer)(unsafe.Pointer(&lp))
+		id = *(*uintptr)(cs)
+		setWindowLongPtrW(hwnd, gwlpUserData, id)
+	} else {
+		id = getWindowLongPtrW(hwnd, gwlpUserData)
+	}
+	w := lookupEngine(id)
+	if w == nil {
+		return defWindowProcW(hwnd, msg, wp, lp)
+	}
+
+	switch msg {
+	case wmApp:
+		dispatchMu.Lock()
+		f := dispatchMap[lp]
+		delete(dispatchMap, lp)
+		dispatchMu.Unlock()
+		if f != nil {
+			f()
+		}
+		return 0
+	case wmSize:
+		w.resizeWebView()
+		return 0
+	case wmClose:
+		destroyWindow(hwnd)
+		return 0
+	case wmDestroy:
+		w.window = 0
+		setWindowLongPtrW(hwnd, gwlpUserData, 0)
+		return 0
+	default:
+		return defWindowProcW(hwnd, msg, wp, lp)
+	}
+}
+
+// --- webview ---------------------------------------------------------------
+
+// webview is the Windows implementation of the WebView interface.
+type webview struct {
+	id         uintptr
+	hinst      uintptr
+	window     uintptr
+	ownsWindow bool
+
+	// WebView2 / COM state.
+	controller uintptr // ICoreWebView2Controller*
+	webview2   uintptr // ICoreWebView2*
+	envH       *comHandler
+	ctrlH      *comHandler
+	msgH       *comHandler
+	scriptH    *comHandler
+	ready      bool
+	scriptDone bool
+	lastScript string
+
+	mu             sync.Mutex
+	bindings       map[string]func(id, req string) (any, error)
+	userScriptSrcs []string
+}
+
+var classNamePtr = utf16("glaze_webview")
+
+// New creates a new window and a web view.
+func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
+
+// NewWindow creates a web view. If window is non-nil it must be an existing
+// HWND to embed into; otherwise a new window is created and owned by this
+// WebView. The first successful call pins the calling goroutine to its OS
+// thread.
+func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
+	if err := ensureWinInit(); err != nil {
+		return nil, err
+	}
+	uiThreadOnce.Do(runtime.LockOSThread)
+
+	w := &webview{
+		ownsWindow: window == nil,
+		bindings:   map[string]func(id, req string) (any, error){},
+	}
+	w.id = registerEngine(w)
+	w.hinst = getModuleHandleW(0)
+
+	if w.ownsWindow {
+		wc := wndClassExW{
+			lpfnWndProc:   wndProcCB,
+			hInstance:     w.hinst,
+			lpszClassName: classNamePtr,
+		}
+		wc.cbSize = uint32(unsafe.Sizeof(wc))
+		registerClassExW(&wc) // idempotent across instances (same class name)
+
+		w.window = createWindowExW(
+			0, classNamePtr, utf16(""), wsOverlappedWindow,
+			cwUseDefault, cwUseDefault, 640, 480,
+			0, 0, w.hinst, w.id, // lpCreateParams = engine id (integer)
+		)
+		if w.window == 0 {
+			unregisterEngine(w.id)
+			return nil, errNoWindow
+		}
+	} else {
+		w.window = uintptr(window)
+		// Associate the engine id so wndProc-routed messages resolve (best
+		// effort; the host owns the real window procedure).
+		setWindowLongPtrW(w.window, gwlpUserData, w.id)
+	}
+
+	if err := w.embed(debug); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+func (w *webview) Run() {
+	var m msgStruct
+	for getMessageW(&m, 0, 0, 0) > 0 {
+		translateMessage(&m)
+		dispatchMessageW(&m)
+	}
+}
+
+func (w *webview) Terminate() {
+	// PostQuitMessage posts WM_QUIT to the CALLING thread's queue. Bindings run
+	// on goroutines (off the UI thread), so route it to the UI thread via the
+	// dispatch queue, matching the native Windows backend.
+	w.Dispatch(func() { postQuitMessage(0) })
+}
+
+func (w *webview) Dispatch(f func()) {
+	dispatchMu.Lock()
+	dispatchSeq++
+	id := dispatchSeq
+	dispatchMap[id] = f
+	dispatchMu.Unlock()
+	postMessageW(w.window, wmApp, 0, id)
+}
+
+func (w *webview) Window() unsafe.Pointer {
+	p := w.window
+	return *(*unsafe.Pointer)(unsafe.Pointer(&p))
+}
+
+func (w *webview) SetTitle(title string) { setWindowTextW(w.window, utf16(title)) }
+
+func (w *webview) SetSize(width, height int, hint Hint) {
+	style := getWindowLongPtrW(w.window, gwlStyle)
+	if hint == HintFixed {
+		style &^= uintptr(wsThickFrame | wsMaximizeBox)
+	} else {
+		style |= uintptr(wsThickFrame | wsMaximizeBox)
+	}
+	setWindowLongPtrW(w.window, gwlStyle, style)
+	setWindowPos(w.window, 0, 0, 0, int32(width), int32(height),
+		swpNoZOrder|swpNoActivate|swpNoMove)
+	if w.ownsWindow {
+		showWindow(w.window, swShow)
+		updateWindow(w.window)
+	}
+}
+
+func (w *webview) Destroy() {
+	if w.controller != 0 {
+		asController(w.controller).Close()
+		asController(w.controller).Release()
+		w.controller = 0
+	}
+	if w.window != 0 && w.ownsWindow {
+		destroyWindow(w.window)
+		w.window = 0
+	}
+	unregisterEngine(w.id)
+}
