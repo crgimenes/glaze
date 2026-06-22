@@ -3,6 +3,7 @@ package glaze
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"unsafe"
 )
@@ -184,7 +185,18 @@ func makeFuncWrapper(f any) (func(id, req string) (any, error), error) {
 
 // callAndMarshal executes a bound function and marshals the result to JSON.
 // Returns the status code (0 for success, -1 for error) and the JSON string.
-func callAndMarshal(fn func(id, req string) (any, error), id, req string) (int, string) {
+//
+// A panic in a user-supplied binding is recovered and turned into a rejected
+// Promise (status -1) instead of crashing the host process and leaving the JS
+// caller's Promise pending forever.
+func callAndMarshal(fn func(id, req string) (any, error), id, req string) (status int, result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			status = -1
+			result = marshalJSON(fmt.Sprintf("binding panicked: %v", r))
+		}
+	}()
+
 	resultValue, err := fn(id, req)
 	if err != nil {
 		return -1, marshalJSON(err.Error())

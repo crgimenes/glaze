@@ -2,6 +2,7 @@ package glaze
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -183,5 +184,21 @@ func TestMakeFuncWrapperReturnsStruct(t *testing.T) {
 	}
 	if r.Name != "Alice" {
 		t.Fatalf("expected Alice, got %s", r.Name)
+	}
+}
+
+// A panic in a binding must not crash the process: callAndMarshal recovers it
+// and reports a rejected Promise (status -1) so the JS caller doesn't hang.
+func TestCallAndMarshalRecoversPanic(t *testing.T) {
+	fn, err := makeFuncWrapper(func() { panic("kaboom") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, result := callAndMarshal(fn, "id", `[]`)
+	if status != -1 {
+		t.Fatalf("status = %d, want -1", status)
+	}
+	if !strings.Contains(result, "panicked") || !strings.Contains(result, "kaboom") {
+		t.Fatalf("result = %q, want it to mention the panic", result)
 	}
 }
