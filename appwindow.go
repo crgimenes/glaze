@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"time"
 )
 
 // AppTransport selects how AppWindow serves HTTP to the embedded browser.
@@ -124,7 +125,7 @@ func AppWindow(opts AppOptions) error {
 	setup.start()
 
 	// Start the application HTTP server in the background.
-	srv := &http.Server{Handler: opts.Handler}
+	srv := &http.Server{Handler: opts.Handler, ReadHeaderTimeout: 10 * time.Second}
 	defer func() { _ = srv.Close() }()
 	go func() { _ = srv.Serve(setup.listener) }()
 
@@ -269,7 +270,7 @@ func setupUnixTransport(socketPath string) (appTransportSetup, error) {
 			return dialer.DialContext(ctx, "unix", path)
 		},
 	}
-	proxyServer := &http.Server{Handler: proxy}
+	proxyServer := &http.Server{Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
 
 	tcpAddr, ok := proxyListener.Addr().(*net.TCPAddr)
 	if !ok {
