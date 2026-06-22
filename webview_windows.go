@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -192,6 +193,10 @@ var (
 	engineSeq uintptr
 
 	uiThreadOnce sync.Once
+
+	// windowCount tracks live owned windows so a user-initiated close of the last
+	// one ends Run() (mirrors the macOS backend's ref-count).
+	windowCount int32
 )
 
 func registerEngine(w *webview) uintptr {
@@ -260,13 +265,24 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 		}
 		return 0
 	case wmClose:
+		// WM_CLOSE is the user-initiated close (the X button / Alt+F4); Destroy()
+		// calls destroyWindow directly and never routes through here. destroyWindow
+		// runs WM_DESTROY synchronously (which decrements windowCount), so once the
+		// last owned window is closed this way we post WM_QUIT to end Run().
+		owned := w.ownsWindow
 		destroyWindow(hwnd)
+		if owned && atomic.LoadInt32(&windowCount) <= 0 {
+			postQuitMessage(0)
+		}
 		return 0
 	case wmDestroy:
-		// Closed via the OS: reclaim the engine registry entry so the webview is
-		// not pinned when Destroy() is never called. unregisterEngine is
-		// idempotent, so a later Destroy() is fine.
+		// Closed via the OS or by Destroy(): reclaim the engine registry entry so
+		// the webview is not pinned when Destroy() is never called (unregisterEngine
+		// is idempotent), and drop the owned-window ref-count.
 		unregisterEngine(id)
+		if w.ownsWindow {
+			atomic.AddInt32(&windowCount, -1)
+		}
 		w.window = 0
 		setWindowLongPtrW(hwnd, gwlpUserData, 0)
 		return 0
@@ -360,6 +376,7 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 			unregisterEngine(w.id)
 			return nil, errNoWindow
 		}
+		atomic.AddInt32(&windowCount, 1)
 	} else {
 		w.window = uintptr(window)
 		// Associate the engine id so wndProc-routed messages resolve (best
