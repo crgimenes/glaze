@@ -38,12 +38,13 @@ const (
 	gwlpUserData = -21
 	gwlStyle     = -16
 
-	wmDestroy  = 0x0002
-	wmSize     = 0x0005
-	wmClose    = 0x0010
-	wmApp      = 0x8000
-	wmQuit     = 0x0012
-	wmNCCreate = 0x0081
+	wmDestroy       = 0x0002
+	wmSize          = 0x0005
+	wmClose         = 0x0010
+	wmGetMinMaxInfo = 0x0024
+	wmApp           = 0x8000
+	wmQuit          = 0x0012
+	wmNCCreate      = 0x0081
 
 	swpNoZOrder   = 0x0004
 	swpNoActivate = 0x0010
@@ -87,6 +88,17 @@ type wndClassExW struct {
 }
 
 type point struct{ X, Y int32 }
+
+// minMaxInfo mirrors Win32 MINMAXINFO; wndProc fills it on WM_GETMINMAXINFO to
+// enforce the HintMin/HintMax sizes (the equivalent of win32_edge.hh's m_minsz/
+// m_maxsz handling).
+type minMaxInfo struct {
+	ptReserved     point
+	ptMaxSize      point
+	ptMaxPosition  point
+	ptMinTrackSize point
+	ptMaxTrackSize point
+}
 
 type msgStruct struct {
 	hwnd     uintptr
@@ -236,6 +248,17 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 	case wmSize:
 		w.resizeWebView()
 		return 0
+	case wmGetMinMaxInfo:
+		// Enforce HintMin/HintMax, mirroring win32_edge.hh's WM_GETMINMAXINFO.
+		mmi := (*minMaxInfo)(ptr(lp))
+		if w.maxWidth > 0 && w.maxHeight > 0 {
+			mmi.ptMaxSize = point{w.maxWidth, w.maxHeight}
+			mmi.ptMaxTrackSize = point{w.maxWidth, w.maxHeight}
+		}
+		if w.minWidth > 0 && w.minHeight > 0 {
+			mmi.ptMinTrackSize = point{w.minWidth, w.minHeight}
+		}
+		return 0
 	case wmClose:
 		destroyWindow(hwnd)
 		return 0
@@ -268,9 +291,19 @@ type webview struct {
 	scriptDone bool
 	lastScript string
 
-	mu             sync.Mutex
-	bindings       map[string]func(id, req string) (any, error)
-	userScriptSrcs []string
+	// Window size constraints from SetSize(HintMin/HintMax); enforced in
+	// wndProc's WM_GETMINMAXINFO handler.
+	minWidth, minHeight int32
+	maxWidth, maxHeight int32
+
+	mu       sync.Mutex
+	bindings map[string]func(id, req string) (any, error)
+	// userScriptSrcs holds the persistent document-start scripts (the bridge +
+	// Init() scripts), excluding bind scripts. installedScriptIDs holds the
+	// WebView2 ids of every doc-start script currently installed, so Bind/Unbind
+	// can remove and rebuild them (matching the macOS/Linux backends).
+	userScriptSrcs     []string
+	installedScriptIDs []string
 }
 
 var classNamePtr = utf16("glaze_webview")
@@ -358,6 +391,16 @@ func (w *webview) Window() unsafe.Pointer {
 func (w *webview) SetTitle(title string) { setWindowTextW(w.window, utf16(title)) }
 
 func (w *webview) SetSize(width, height int, hint Hint) {
+	// HintMin/HintMax only record constraints (enforced via WM_GETMINMAXINFO);
+	// they do not resize the window, matching win32_edge.hh.
+	switch hint {
+	case HintMin:
+		w.minWidth, w.minHeight = int32(width), int32(height)
+		return
+	case HintMax:
+		w.maxWidth, w.maxHeight = int32(width), int32(height)
+		return
+	}
 	style := getWindowLongPtrW(w.window, gwlStyle)
 	if hint == HintFixed {
 		style &^= uintptr(wsThickFrame | wsMaximizeBox)
@@ -375,7 +418,14 @@ func (w *webview) SetSize(width, height int, hint Hint) {
 
 func (w *webview) Destroy() {
 	if w.controller != 0 {
+		// Close the controller, then release the references we took in
+		// handlerInvoke (ICoreWebView2 was AddRef'd, the controller too),
+		// matching win32_edge.hh's teardown order.
 		asController(w.controller).Close()
+		if w.webview2 != 0 {
+			asWebView2(w.webview2).Release()
+			w.webview2 = 0
+		}
 		asController(w.controller).Release()
 		w.controller = 0
 	}
