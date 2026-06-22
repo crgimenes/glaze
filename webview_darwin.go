@@ -230,13 +230,20 @@ func runOpenPanel(self objc.ID, _cmd objc.SEL, webView, parameters, frame, compl
 		if int(panel.Send(sel("runModal"))) == nsModalResponseOK {
 			urls = panel.Send(sel("URLs"))
 		}
-
-		sig := class("NSMethodSignature").Send(sel("signatureWithObjCTypes:"), "v@?@")
-		inv := class("NSInvocation").Send(sel("invocationWithMethodSignature:"), sig)
-		inv.Send(sel("setTarget:"), completionHandler)
-		inv.Send(sel("setArgument:atIndex:"), unsafe.Pointer(&urls), 1)
-		inv.Send(sel("invoke"))
+		invokeOpenPanelCompletion(completionHandler, urls)
 	})
+}
+
+// invokeOpenPanelCompletion calls the WKWebView open-panel completion block with
+// the selected URLs (or nil when cancelled). The handler is an opaque block, so
+// it is driven through NSInvocation with the signature "v@?@": index 0 is the
+// block itself, index 1 the NSArray<NSURL*>* argument.
+func invokeOpenPanelCompletion(completionHandler, urls objc.ID) {
+	sig := class("NSMethodSignature").Send(sel("signatureWithObjCTypes:"), "v@?@")
+	inv := class("NSInvocation").Send(sel("invocationWithMethodSignature:"), sig)
+	inv.Send(sel("setTarget:"), completionHandler)
+	inv.Send(sel("setArgument:atIndex:"), unsafe.Pointer(&urls), 1)
+	inv.Send(sel("invoke"))
 }
 
 // --- instance registry (replaces objc associated objects) ------------------
@@ -315,6 +322,7 @@ type webview struct {
 	widget         objc.ID
 	webView        objc.ID
 	manager        objc.ID
+	scriptHandler  objc.ID
 
 	ownsWindow bool
 	debug      bool
@@ -434,6 +442,7 @@ func (w *webview) windowSettings(debug bool) {
 		handler := objc.ID(scriptHandlerClass).Send(sel("new"))
 		registerInstance(handler, w)
 		handler.Send(sel("autorelease"))
+		w.scriptHandler = handler // kept so Destroy can drop its registry entry
 		w.manager.Send(sel("addScriptMessageHandler:name:"), handler, nsstr("__webview__"))
 
 		w.pushUserScript(createInitScript(bridgePostFn))
@@ -559,8 +568,12 @@ func (w *webview) Init(js string) {
 
 func (w *webview) Eval(js string) {
 	if w.webView == 0 {
-		return
+		return // web view destroyed (e.g. a late reply dispatched after Destroy).
 	}
+	// Unlike the Linux backend, there is no "URL is nil" guard here: SetHtml uses
+	// loadHTMLString with a nil baseURL, which leaves WKWebView.URL nil, so such a
+	// guard would block every Eval on SetHtml pages. Evaluating before load is
+	// harmless on WKWebView (the completion handler, which we ignore, just errors).
 	autorelease(func() {
 		w.webView.Send(sel("evaluateJavaScript:completionHandler:"), nsstr(js), objc.ID(0))
 	})
@@ -634,6 +647,12 @@ func (w *webview) Destroy() {
 			unregisterInstance(w.appDelegate)
 			w.appDelegate.Send(sel("release"))
 			w.appDelegate = 0
+		}
+		if w.scriptHandler != 0 {
+			// The handler object is owned by the (now-released) content manager;
+			// only its registry entry needs reclaiming (a map delete).
+			unregisterInstance(w.scriptHandler)
+			w.scriptHandler = 0
 		}
 	})
 	if w.ownsWindow {

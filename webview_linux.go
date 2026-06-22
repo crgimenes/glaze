@@ -467,6 +467,12 @@ func (w *webview) Destroy() {
 		w.window = 0
 	}
 	if w.webview != 0 {
+		// Disconnect the manager's script-message handler (matched by data = w.id)
+		// before the manager is freed with the web view.
+		if w.manager != 0 {
+			gSignalHandlersDisconnectMatched(w.manager, gSignalMatchData, 0, 0, 0, 0, w.id)
+			w.manager = 0
+		}
 		gObjectUnref(w.webview)
 		w.webview = 0
 	}
