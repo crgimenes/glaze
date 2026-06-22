@@ -3,8 +3,8 @@
 // This reimplements webview's GTK/WebKitGTK backend (gtk_webkitgtk.hh + the
 // linux compat headers) by dlopen/dlsym-ing the system GTK and WebKitGTK shared
 // objects directly, so glaze needs no cgo and no bundled libwebview.so on Linux.
-// It targets GTK 3 + webkit2gtk-4.1 (falling back to -4.0). The exported API
-// matches the native-library backend used on Windows.
+// Detects the runtime stack: GTK4 + webkitgtk-6.0 when present, else GTK3 +
+// webkit2gtk-4.1 (falling back to -4.0).
 
 package glaze
 
@@ -66,6 +66,15 @@ var (
 	gtkWidgetShow             func(widget uintptr)
 	gtkWidgetGrabFocus        func(widget uintptr)
 	gtkWindowClose            func(window uintptr)
+
+	// GTK 4 variants (bound + used only when gtk4 is true).
+	gtk4                    bool
+	gtkInitCheck0           func() bool
+	gtkWindowNew0           func() uintptr
+	gtkWindowSetChild       func(window, widget uintptr)
+	gtkWidgetSetVisible     func(widget uintptr, visible bool)
+	gtkWindowSetDefaultSize func(window uintptr, w, h int)
+	webkitRegisterHandler3  func(manager uintptr, name string, world uintptr)
 
 	webkitWebViewNew                              func() uintptr
 	webkitWebViewGetUserContentManager            func(webview uintptr) uintptr
@@ -130,20 +139,26 @@ func ensureInit() error {
 			initErr = err
 			return
 		}
-		gtk, err := openFirst("libgtk-3.so.0")
-		if err != nil {
-			initErr = err
-			return
-		}
-		webkit, err := openFirst("libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37")
-		if err != nil {
-			initErr = err
-			return
-		}
-		jsc, err := openFirst("libjavascriptcoregtk-4.1.so.0", "libjavascriptcoregtk-4.0.so.18")
-		if err != nil {
-			initErr = err
-			return
+		// Prefer the GTK4 + webkitgtk-6.0 stack; fall back to GTK3 + webkit2gtk-4.x.
+		var gtk, webkit, jsc uintptr
+		gtk4lib, gerr := openFirst("libgtk-4.so.1")
+		wk6, werr := openFirst("libwebkitgtk-6.0.so.4")
+		jsc6, jerr := openFirst("libjavascriptcoregtk-6.0.so.1")
+		if gerr == nil && werr == nil && jerr == nil {
+			gtk4, gtk, webkit, jsc = true, gtk4lib, wk6, jsc6
+		} else {
+			if gtk, err = openFirst("libgtk-3.so.0"); err != nil {
+				initErr = err
+				return
+			}
+			if webkit, err = openFirst("libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37"); err != nil {
+				initErr = err
+				return
+			}
+			if jsc, err = openFirst("libjavascriptcoregtk-4.1.so.0", "libjavascriptcoregtk-4.0.so.18"); err != nil {
+				initErr = err
+				return
+			}
 		}
 
 		purego.RegisterLibFunc(&gIdleAddFull, glib, "g_idle_add_full")
@@ -155,16 +170,24 @@ func ensureInit() error {
 		// g_signal_handlers_disconnect_by_data is a macro, not a symbol.
 		purego.RegisterLibFunc(&gSignalHandlersDisconnectMatched, gobject, "g_signal_handlers_disconnect_matched")
 
-		purego.RegisterLibFunc(&gtkInitCheck, gtk, "gtk_init_check")
-		purego.RegisterLibFunc(&gtkWindowNew, gtk, "gtk_window_new")
+		if gtk4 {
+			purego.RegisterLibFunc(&gtkInitCheck0, gtk, "gtk_init_check")
+			purego.RegisterLibFunc(&gtkWindowNew0, gtk, "gtk_window_new")
+			purego.RegisterLibFunc(&gtkWindowSetChild, gtk, "gtk_window_set_child")
+			purego.RegisterLibFunc(&gtkWidgetSetVisible, gtk, "gtk_widget_set_visible")
+			purego.RegisterLibFunc(&gtkWindowSetDefaultSize, gtk, "gtk_window_set_default_size")
+		} else {
+			purego.RegisterLibFunc(&gtkInitCheck, gtk, "gtk_init_check")
+			purego.RegisterLibFunc(&gtkWindowNew, gtk, "gtk_window_new")
+			purego.RegisterLibFunc(&gtkContainerAdd, gtk, "gtk_container_add")
+			purego.RegisterLibFunc(&gtkContainerRemove, gtk, "gtk_container_remove")
+			purego.RegisterLibFunc(&gtkWidgetShow, gtk, "gtk_widget_show")
+			purego.RegisterLibFunc(&gtkWindowResize, gtk, "gtk_window_resize")
+			purego.RegisterLibFunc(&gtkWindowSetGeometryHints, gtk, "gtk_window_set_geometry_hints")
+		}
 		purego.RegisterLibFunc(&gtkWindowSetTitle, gtk, "gtk_window_set_title")
 		purego.RegisterLibFunc(&gtkWindowSetResizable, gtk, "gtk_window_set_resizable")
-		purego.RegisterLibFunc(&gtkWindowResize, gtk, "gtk_window_resize")
 		purego.RegisterLibFunc(&gtkWidgetSetSizeRequest, gtk, "gtk_widget_set_size_request")
-		purego.RegisterLibFunc(&gtkWindowSetGeometryHints, gtk, "gtk_window_set_geometry_hints")
-		purego.RegisterLibFunc(&gtkContainerAdd, gtk, "gtk_container_add")
-		purego.RegisterLibFunc(&gtkContainerRemove, gtk, "gtk_container_remove")
-		purego.RegisterLibFunc(&gtkWidgetShow, gtk, "gtk_widget_show")
 		purego.RegisterLibFunc(&gtkWidgetGrabFocus, gtk, "gtk_widget_grab_focus")
 		purego.RegisterLibFunc(&gtkWindowClose, gtk, "gtk_window_close")
 
@@ -177,12 +200,18 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitWebViewLoadURI, webkit, "webkit_web_view_load_uri")
 		purego.RegisterLibFunc(&webkitWebViewLoadHTML, webkit, "webkit_web_view_load_html")
 		purego.RegisterLibFunc(&webkitWebViewGetURI, webkit, "webkit_web_view_get_uri")
-		purego.RegisterLibFunc(&webkitUserContentManagerRegisterHandler, webkit, "webkit_user_content_manager_register_script_message_handler")
 		purego.RegisterLibFunc(&webkitUserContentManagerAddScript, webkit, "webkit_user_content_manager_add_script")
 		purego.RegisterLibFunc(&webkitUserContentManagerRemoveAllScripts, webkit, "webkit_user_content_manager_remove_all_scripts")
 		purego.RegisterLibFunc(&webkitUserScriptNew, webkit, "webkit_user_script_new")
 		purego.RegisterLibFunc(&webkitUserScriptUnref, webkit, "webkit_user_script_unref")
-		purego.RegisterLibFunc(&webkitJavascriptResultGetJSValue, webkit, "webkit_javascript_result_get_js_value")
+		if gtk4 {
+			// GTK4: the script-message callback delivers a JSCValue* directly, and
+			// the handler registration takes a world-name argument.
+			purego.RegisterLibFunc(&webkitRegisterHandler3, webkit, "webkit_user_content_manager_register_script_message_handler")
+		} else {
+			purego.RegisterLibFunc(&webkitUserContentManagerRegisterHandler, webkit, "webkit_user_content_manager_register_script_message_handler")
+			purego.RegisterLibFunc(&webkitJavascriptResultGetJSValue, webkit, "webkit_javascript_result_get_js_value")
+		}
 
 		if _, e := purego.Dlsym(webkit, "webkit_web_view_evaluate_javascript"); e == nil {
 			purego.RegisterLibFunc(&webkitWebViewEvaluateJavascript, webkit, "webkit_web_view_evaluate_javascript")
@@ -219,16 +248,44 @@ func ensureInit() error {
 	return initErr
 }
 
-// jsResultToString unwraps a WebKitJavascriptResult* (GTK3): get the JSCValue,
-// stringify it, copy to Go, and g_free the C string.
-func jsResultToString(jsResult uintptr) string {
-	value := webkitJavascriptResultGetJSValue(jsResult)
+// jsResultToString turns the script-message callback's second argument into a
+// Go string. On GTK4 it is a JSCValue* directly; on GTK3 it is a
+// WebKitJavascriptResult* that must be unwrapped first.
+func jsResultToString(arg uintptr) string {
+	value := arg
+	if !gtk4 {
+		value = webkitJavascriptResultGetJSValue(arg)
+	}
 	cs := jscValueToString(value)
 	s := cstr(cs)
 	if cs != 0 {
 		gFree(cs)
 	}
 	return s
+}
+
+// gtkInit, gtkNewWindow and registerScriptHandler hide the GTK3/GTK4 call-arity
+// differences.
+func gtkInit() bool {
+	if gtk4 {
+		return gtkInitCheck0()
+	}
+	return gtkInitCheck(0, 0)
+}
+
+func gtkNewWindow() uintptr {
+	if gtk4 {
+		return gtkWindowNew0()
+	}
+	return gtkWindowNew(gtkWindowToplevel)
+}
+
+func registerScriptHandler(manager uintptr, name string) {
+	if gtk4 {
+		webkitRegisterHandler3(manager, name, 0) // default script world
+		return
+	}
+	webkitUserContentManagerRegisterHandler(manager, name)
 }
 
 func cstr(p uintptr) string {
@@ -332,10 +389,10 @@ func (w *webview) windowInit(window uintptr) {
 		w.window = window
 		w.ownsWindow = false
 	} else {
-		if !gtkInitCheck(0, 0) {
+		if !gtkInit() {
 			panic("webview: gtk_init_check failed")
 		}
-		w.window = gtkWindowNew(gtkWindowToplevel)
+		w.window = gtkNewWindow()
 		gSignalConnectData(w.window, "destroy", windowDestroyFn, w.id, 0, 0)
 	}
 
@@ -345,7 +402,7 @@ func (w *webview) windowInit(window uintptr) {
 
 	gSignalConnectData(w.manager, "script-message-received::__webview__",
 		messageHandlerFn, w.id, 0, 0)
-	webkitUserContentManagerRegisterHandler(w.manager, "__webview__")
+	registerScriptHandler(w.manager, "__webview__")
 
 	w.pushUserScript(createInitScript(bridgePostFn))
 }
@@ -411,10 +468,16 @@ func (w *webview) SetSize(width, height int, hint Hint) {
 	case HintMin:
 		gtkWidgetSetSizeRequest(w.window, width, height)
 	case HintMax:
-		g := gdkGeometry{MaxWidth: int32(width), MaxHeight: int32(height)}
-		gtkWindowSetGeometryHints(w.window, 0, &g, gdkHintMaxSize)
+		if !gtk4 { // gtk_window_set_geometry_hints is GTK3/X11-only
+			g := gdkGeometry{MaxWidth: int32(width), MaxHeight: int32(height)}
+			gtkWindowSetGeometryHints(w.window, 0, &g, gdkHintMaxSize)
+		}
 	default: // HintNone, HintFixed
-		gtkWindowResize(w.window, width, height)
+		if gtk4 {
+			gtkWindowSetDefaultSize(w.window, width, height)
+		} else {
+			gtkWindowResize(w.window, width, height)
+		}
 	}
 	w.isSizeSet = true
 	w.windowShow()
@@ -455,11 +518,20 @@ func (w *webview) windowShow() {
 	if w.isWindowShown {
 		return
 	}
-	gtkContainerAdd(w.window, w.webview)
-	gtkWidgetShow(w.webview)
+	if gtk4 {
+		gtkWindowSetChild(w.window, w.webview)
+		gtkWidgetSetVisible(w.webview, true)
+	} else {
+		gtkContainerAdd(w.window, w.webview)
+		gtkWidgetShow(w.webview)
+	}
 	if w.ownsWindow {
 		gtkWidgetGrabFocus(w.webview)
-		gtkWidgetShow(w.window)
+		if gtk4 {
+			gtkWidgetSetVisible(w.window, true)
+		} else {
+			gtkWidgetShow(w.window)
+		}
 	}
 	w.isWindowShown = true
 }
