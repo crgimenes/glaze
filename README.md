@@ -42,8 +42,39 @@ go get github.com/crgimenes/glaze@latest
 Glaze binds the WebView the operating system already provides; there is nothing to bundle, but that runtime must be present:
 
 - **macOS** -- nothing extra. The Cocoa/WebKit frameworks ship with the OS.
-- **Linux** -- a system WebKitGTK: GTK4 `libwebkitgtk-6.0` *or* GTK3 `libwebkit2gtk-4.1` / `4.0` (e.g. `apt install libwebkit2gtk-4.1-0`). Glaze detects which is installed at runtime.
+- **Linux** -- a system WebKitGTK, GTK4 or GTK3; glaze detects which at runtime. The exact libraries and how to install or debug them are in [Linux shared libraries](#linux-shared-libraries) below.
 - **Windows** -- the Microsoft Edge WebView2 Runtime (preinstalled on current Windows 10/11; otherwise install the Evergreen Runtime). It is located via the registry, and `New` returns an error if it is missing. To bundle zero native DLLs, glaze calls the runtime's internal environment-creation export directly instead of shipping `WebView2Loader.dll`; that export is undocumented and could change in a future Edge runtime (in which case `New` returns a clear error). See the note on `createEnvironment` in [webview2_windows.go](webview2_windows.go).
+
+### Linux shared libraries
+
+Linux is the hard case. Every distro packages WebKitGTK a little differently and glaze can't paper over all of it -- but what it needs is concrete. These are the exact sonames it tries to `dlopen` at startup. They have to be loadable by the dynamic linker (on the default search path or in the `ldconfig` cache, or in `LD_LIBRARY_PATH`) and the **same architecture as your binary** -- a 64-bit Go build needs 64-bit libraries.
+
+Always loaded:
+
+- `libglib-2.0.so.0`
+- `libgobject-2.0.so.0`
+
+Then glaze prefers the GTK4 stack and falls back to GTK3 if any one of the three is missing:
+
+- GTK4: `libgtk-4.so.1`, `libwebkitgtk-6.0.so.4`, `libjavascriptcoregtk-6.0.so.1`
+- GTK3: `libgtk-3.so.0`, `libwebkit2gtk-4.1.so.0` (or `libwebkit2gtk-4.0.so.37`), `libjavascriptcoregtk-4.1.so.0` (or `libjavascriptcoregtk-4.0.so.18`)
+
+Installing the WebKitGTK package pulls GTK and GLib in as dependencies:
+
+- Debian / Ubuntu: `apt install libwebkit2gtk-4.1-0` (GTK3) or `libwebkitgtk-6.0-4` (GTK4)
+- Fedora: `dnf install webkit2gtk4.1` or `webkitgtk6.0`
+- Arch: `pacman -S webkit2gtk-4.1` or `webkitgtk-6.0`
+- Nix / NixOS: these libraries are not on the default loader path, so a bare `go run` outside a shell that provides them fails to load. Add `webkitgtk_4_1` (or `webkitgtk_6_0`) to your `buildInputs` / dev shell, or expose them through `LD_LIBRARY_PATH` or `nix-ld`.
+
+If `New` returns `webview: none of [...] could be loaded`, the linker can't find that soname. See what's actually visible to it:
+
+```bash
+ldconfig -p | grep -E 'libwebkit(2)?gtk|libjavascriptcoregtk|libgtk-[34]'
+```
+
+`wrong ELF class: ELFCLASS32` means the library was found but in the wrong architecture -- a 64-bit binary was pointed at 32-bit libraries (check your `LD_LIBRARY_PATH`).
+
+The test suite reflects this: the GUI tests skip themselves when none of these libraries can load, so `go test ./...` stays green on a box without WebKitGTK instead of failing.
 
 ## Hello world
 
