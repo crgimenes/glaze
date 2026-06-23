@@ -29,3 +29,6 @@ coverage.*
 
 .DS_Store
 dist/
+
+# Planning scratch, kept out of the repo by agreement.
+/TODO.md
