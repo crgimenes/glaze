@@ -23,16 +23,23 @@ var (
 	resEmbed       atomic.Value // string
 )
 
-// hasDisplay reports whether a windowing system is available. Without it
-// WebKitGTK cannot initialize, so the GUI scenarios are skipped (keeping
-// `go test ./...` headless-safe); CI runs them under xvfb, which sets DISPLAY.
+// hasDisplay reports whether a windowing system is available.
 func hasDisplay() bool {
 	return os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != ""
 }
 
+// guiAvailable reports whether the GTK/WebKitGTK stack can actually run here:
+// the shared libraries load AND a display is present. Without both, the GUI
+// scenarios are skipped so `go test ./...` stays green on a headless box or one
+// without WebKitGTK in the loader path (minimal containers, Nix, etc.) instead
+// of failing. CI installs the libraries and runs under xvfb, which sets DISPLAY.
+func guiAvailable() bool {
+	return hasDisplay() && ensureInit() == nil
+}
+
 func TestMain(m *testing.M) {
 	runtime.LockOSThread()
-	if hasDisplay() {
+	if guiAvailable() {
 		resBridge.Store(bridgeScenario())
 		resErrorUnbind.Store(errorUnbindScenario())
 		resRichTypes.Store(richTypesScenario())
@@ -206,7 +213,7 @@ window.addEventListener('load', async function(){
 func requireGUI(t *testing.T, got string) {
 	t.Helper()
 	if got == "" {
-		t.Skip("no display; set DISPLAY or run under xvfb-run")
+		t.Skip("WebKitGTK/display not available; install libwebkit2gtk and run under xvfb-run")
 	}
 }
 

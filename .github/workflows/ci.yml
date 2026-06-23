@@ -36,6 +36,10 @@ jobs:
       # process) needs. Relax it so the WebProcess can launch under xvfb.
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      # No DISPLAY here, so the GUI tests must skip (not fail). This guards the
+      # headless/GTK-less path that a plain `go test ./...` hits off CI.
+      - name: Headless safety (GUI tests must skip)
+        run: go test ./...
       - name: Test (xvfb)
         env:
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'

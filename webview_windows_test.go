@@ -24,13 +24,34 @@ var (
 	resWinClose       atomic.Value // string
 )
 
+// guiAvailable reports whether the Edge WebView2 Runtime is installed. Without
+// it the GUI scenarios are skipped so `go test ./...` stays green instead of
+// failing on a machine without the runtime; windows-latest CI ships it.
+func guiAvailable() bool {
+	if ensureCOMInit() != nil {
+		return false
+	}
+	_, err := findEmbeddedBrowserDLL()
+	return err == nil
+}
+
+// requireGUI skips a GUI assertion when its scenario did not run.
+func requireGUI(t *testing.T, got string) {
+	t.Helper()
+	if got == "" {
+		t.Skip("Edge WebView2 Runtime not available")
+	}
+}
+
 func TestMain(m *testing.M) {
 	runtime.LockOSThread()
-	resWinBridge.Store(winBridgeScenario())
-	resWinErrorUnbind.Store(winErrorUnbindScenario())
-	resWinRichTypes.Store(winRichTypesScenario())
-	resWinEmbed.Store(winEmbedScenario())
-	resWinClose.Store(winCloseViaUIScenario()) // last: it ends with WM_QUIT
+	if guiAvailable() {
+		resWinBridge.Store(winBridgeScenario())
+		resWinErrorUnbind.Store(winErrorUnbindScenario())
+		resWinRichTypes.Store(winRichTypesScenario())
+		resWinEmbed.Store(winEmbedScenario())
+		resWinClose.Store(winCloseViaUIScenario()) // last: it ends with WM_QUIT
+	}
 	os.Exit(m.Run())
 }
 
@@ -90,13 +111,17 @@ func winEmbedScenario() string {
 }
 
 func TestEmbedExternalWindow(t *testing.T) {
-	if got, _ := resWinEmbed.Load().(string); got != "embed-ok" {
+	got, _ := resWinEmbed.Load().(string)
+	requireGUI(t, got)
+	if got != "embed-ok" {
 		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
 	}
 }
 
 func TestCloseViaUI(t *testing.T) {
-	if got, _ := resWinClose.Load().(string); got != "closed" {
+	got, _ := resWinClose.Load().(string)
+	requireGUI(t, got)
+	if got != "closed" {
 		t.Fatalf("close via UI = %q, want %q", got, "closed")
 	}
 }
@@ -232,21 +257,27 @@ window.addEventListener('load', async function(){
 }
 
 func TestBridge(t *testing.T) {
-	if got, _ := resWinBridge.Load().(string); got != "42|hi x" {
+	got, _ := resWinBridge.Load().(string)
+	requireGUI(t, got)
+	if got != "42|hi x" {
 		t.Fatalf("JS<->Go bridge = %q, want %q", got, "42|hi x")
 	}
 }
 
 func TestErrorAndUnbind(t *testing.T) {
 	const want = "temp=undefined boom=kaboom"
-	if got, _ := resWinErrorUnbind.Load().(string); got != want {
+	got, _ := resWinErrorUnbind.Load().(string)
+	requireGUI(t, got)
+	if got != want {
 		t.Fatalf("error/unbind = %q, want %q", got, want)
 	}
 }
 
 func TestRichBindingTypes(t *testing.T) {
 	const want = "p=2,3 s=10"
-	if got, _ := resWinRichTypes.Load().(string); got != want {
+	got, _ := resWinRichTypes.Load().(string)
+	requireGUI(t, got)
+	if got != want {
 		t.Fatalf("rich types = %q, want %q", got, want)
 	}
 }
