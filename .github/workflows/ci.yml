@@ -23,8 +23,12 @@ jobs:
             sudo apt-get install -y --no-install-recommends \
               libgtk-4-1 libwebkitgtk-6.0-4 libjavascriptcoregtk-6.0-1 xvfb xauth
           else
+            # libgtk-4-1 is installed alongside the GTK3 stack on purpose: a real
+            # desktop usually has both GTK versions present, and glaze must NOT
+            # pull GTK4 into the process when only the GTK3 webkit is available
+            # (doing so corrupts the GObject type system and crashes gtk_init).
             sudo apt-get install -y --no-install-recommends \
-              libgtk-3-0 libwebkit2gtk-4.1-0 libjavascriptcoregtk-4.1-0 xvfb xauth
+              libgtk-3-0 libgtk-4-1 libwebkit2gtk-4.1-0 libjavascriptcoregtk-4.1-0 xvfb xauth
           fi
       - run: go build ./...
       - run: go vet ./...

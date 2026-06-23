@@ -145,12 +145,25 @@ func ensureInit() error {
 			return
 		}
 		// Prefer the GTK4 + webkitgtk-6.0 stack; fall back to GTK3 + webkit2gtk-4.x.
+		//
+		// The deciding probe is the webkit library, NOT libgtk-4. A GTK3 desktop
+		// commonly also has libgtk-4 installed (for newer apps), and dlopen-ing
+		// both GTK3 and GTK4 into the same process corrupts the GObject type
+		// system and crashes gtk_init ("cannot register existing type
+		// 'GdkDisplayManager'"). So load libgtk-4 only when webkitgtk-6.0 is
+		// actually present -- otherwise GTK4 never enters the process.
 		var gtk, webkit, jsc uintptr
-		gtk4lib, gerr := openFirst("libgtk-4.so.1")
-		wk6, werr := openFirst("libwebkitgtk-6.0.so.4")
-		jsc6, jerr := openFirst("libjavascriptcoregtk-6.0.so.1")
-		if gerr == nil && werr == nil && jerr == nil {
-			gtk4, gtk, webkit, jsc = true, gtk4lib, wk6, jsc6
+		if wk6, werr := openFirst("libwebkitgtk-6.0.so.4"); werr == nil {
+			gtk4 = true
+			webkit = wk6
+			if gtk, err = openFirst("libgtk-4.so.1"); err != nil {
+				initErr = err
+				return
+			}
+			if jsc, err = openFirst("libjavascriptcoregtk-6.0.so.1"); err != nil {
+				initErr = err
+				return
+			}
 		} else {
 			if gtk, err = openFirst("libgtk-3.so.0"); err != nil {
 				initErr = err
