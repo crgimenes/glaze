@@ -5,6 +5,8 @@
 // The exported API (New/NewWindow/Init + the WebView interface) matches the
 // native-library backend used on the other platforms.
 
+//go:build darwin
+
 package glaze
 
 import (

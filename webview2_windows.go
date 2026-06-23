@@ -19,6 +19,8 @@
 // (kept alive, and Go's GC is non-moving) so the pointers handed to WebView2
 // stay valid across the async creation window.
 
+//go:build windows
+
 package glaze
 
 import (

@@ -6,6 +6,8 @@
 // Detects the runtime stack: GTK4 + webkitgtk-6.0 when present, else GTK3 +
 // webkit2gtk-4.1 (falling back to -4.0).
 
+//go:build linux
+
 package glaze
 
 import (

@@ -14,6 +14,8 @@
 // are resolved with syscall.LoadLibrary/GetProcAddress and bound via
 // purego.RegisterFunc; the WndProc uses purego.NewCallback.
 
+//go:build windows
+
 package glaze
 
 import (
