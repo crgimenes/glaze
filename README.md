@@ -176,19 +176,16 @@ go test ./...
 
 This runs the pure-logic unit tests (binding marshalling, transport selection)
 plus the per-platform GUI smoke tests, which drive a real WebView
-(WKWebView / WebKitGTK / WebView2) and therefore need the system WebView present.
-On Linux the GUI tests **skip automatically when no display is set**, so the
-command above is safe on a headless box; run them under a virtual display to
-actually exercise them:
+(WKWebView / WebKitGTK / WebView2). Those GUI tests **skip themselves** when the
+system WebView can't run here -- no display, or the libraries aren't installed
+(WebKitGTK on Linux, the Edge WebView2 Runtime on Windows) -- so the command
+above stays green on a headless or minimal box instead of failing.
+
+To actually exercise the GUI tests on Linux, install WebKitGTK and run under a
+virtual display:
 
 ```bash
 xvfb-run -a go test ./...
-```
-
-There is also a standalone GUI integration test behind a build tag:
-
-```bash
-go test -tags=integration -run TestWebview .
 ```
 
 ## Building on Windows
