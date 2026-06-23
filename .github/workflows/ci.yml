@@ -38,14 +38,17 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       # No DISPLAY here, so the GUI tests must skip (not fail). This guards the
       # headless/GTK-less path that a plain `go test ./...` hits off CI.
+      # -count=1 so this skip result is not cached and reused by the xvfb run.
       - name: Headless safety (GUI tests must skip)
-        run: go test ./...
+        run: go test -count=1 ./...
       - name: Test (xvfb)
         env:
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
           LIBGL_ALWAYS_SOFTWARE: '1'
-        run: xvfb-run -a go test ./...
+        # -count=1 so the GUI tests actually run here instead of reusing the
+        # cached skip from the headless step above.
+        run: xvfb-run -a go test -count=1 ./...
 
   macos:
     runs-on: macos-latest
