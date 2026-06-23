@@ -54,7 +54,7 @@ Always loaded:
 - `libglib-2.0.so.0`
 - `libgobject-2.0.so.0`
 
-Then glaze prefers the GTK4 stack and falls back to GTK3 if any one of the three is missing:
+`libwebkitgtk-6.0.so.4` decides the stack: if it loads, glaze uses GTK4; otherwise GTK3. It never loads both -- most desktops have GTK3 and GTK4 installed side by side, and pulling both into one process corrupts GTK's type system and crashes `gtk_init`.
 
 - GTK4: `libgtk-4.so.1`, `libwebkitgtk-6.0.so.4`, `libjavascriptcoregtk-6.0.so.1`
 - GTK3: `libgtk-3.so.0`, `libwebkit2gtk-4.1.so.0` (or `libwebkit2gtk-4.0.so.37`), `libjavascriptcoregtk-4.1.so.0` (or `libjavascriptcoregtk-4.0.so.18`)
