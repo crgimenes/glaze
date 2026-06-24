@@ -163,7 +163,8 @@ func makeFuncWrapper(f any) (func(id, req string) (any, error), error) {
 
 	fn := func(id, req string) (any, error) {
 		var rawArgs []json.RawMessage
-		if err := json.Unmarshal([]byte(req), &rawArgs); err != nil {
+		err := json.Unmarshal([]byte(req), &rawArgs)
+		if err != nil {
 			return nil, err
 		}
 		if (!isVariadic && len(rawArgs) != numIn) || (isVariadic && len(rawArgs) < numIn-1) {
@@ -178,7 +179,8 @@ func makeFuncWrapper(f any) (func(id, req string) (any, error), error) {
 			} else {
 				argVal = reflect.New(inTypes[i])
 			}
-			if err := json.Unmarshal(rawArgs[i], argVal.Interface()); err != nil {
+			err = json.Unmarshal(rawArgs[i], argVal.Interface())
+			if err != nil {
 				return nil, err
 			}
 			args[i] = argVal.Elem()
@@ -191,7 +193,8 @@ func makeFuncWrapper(f any) (func(id, req string) (any, error), error) {
 			return nil, nil //nolint:nilnil
 		case 1:
 			if returnsError {
-				if v := res[0].Interface(); v != nil {
+				v := res[0].Interface()
+				if v != nil {
 					return nil, v.(error)
 				}
 				return nil, nil //nolint:nilnil
@@ -199,7 +202,8 @@ func makeFuncWrapper(f any) (func(id, req string) (any, error), error) {
 			return res[0].Interface(), nil
 		case 2:
 			var err error
-			if v := res[1].Interface(); v != nil {
+			v := res[1].Interface()
+			if v != nil {
 				err = v.(error)
 			}
 			return res[0].Interface(), err
@@ -219,7 +223,8 @@ func makeFuncWrapper(f any) (func(id, req string) (any, error), error) {
 // caller's Promise pending forever.
 func callAndMarshal(fn func(id, req string) (any, error), id, req string) (status int, result string) {
 	defer func() {
-		if r := recover(); r != nil {
+		r := recover()
+		if r != nil {
 			status = -1
 			result = marshalJSON(fmt.Sprintf("binding panicked: %v", r))
 		}

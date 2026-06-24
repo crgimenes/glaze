@@ -193,7 +193,8 @@ var (
 // loaded ole32 + CoTaskMemFree.
 func ensureDialogInit() error {
 	dialogInitOnce.Do(func() {
-		if err := ensureCOMInit(); err != nil {
+		err := ensureCOMInit()
+		if err != nil {
 			dialogInitErr = err
 			return
 		}
@@ -257,7 +258,8 @@ func (w *webview) OpenDirectory(opts FileDialogOptions) (string, error) {
 // is dismissed (the Common Item Dialog's Show is application-modal and pumps its
 // own loop, so it must run on the message-pump thread).
 func (w *webview) showFileDialog(save, pickFolders, multi bool, opts FileDialogOptions) ([]string, error) {
-	if err := ensureDialogInit(); err != nil {
+	err := ensureDialogInit()
+	if err != nil {
 		return nil, err
 	}
 	type outcome struct {
@@ -279,7 +281,8 @@ func runFileDialog(parent uintptr, save, pickFolders, multi bool, opts FileDialo
 		clsid, iid = &clsidFileSaveDialog, &iidIFileSaveDialog
 	}
 	var pdlg uintptr
-	if hr := coCreateInstance(clsid, 0, clsctxInprocServer, iid, &pdlg); hr < 0 || pdlg == 0 {
+	hr := coCreateInstance(clsid, 0, clsctxInprocServer, iid, &pdlg)
+	if hr < 0 || pdlg == 0 {
 		return nil, fmt.Errorf("glaze: CoCreateInstance(file dialog) failed: 0x%08X", uint32(hr))
 	}
 	dlg := (*iFileDialog)(ptr(pdlg))
@@ -311,13 +314,15 @@ func runFileDialog(parent uintptr, save, pickFolders, multi bool, opts FileDialo
 		dlg.SetFileName(utf16(opts.Filename))
 	}
 	if !pickFolders {
-		if specs, keep := buildFilterSpecs(opts.Filters); len(specs) > 0 {
+		specs, keep := buildFilterSpecs(opts.Filters)
+		if len(specs) > 0 {
 			dlg.SetFileTypes(uint32(len(specs)), &specs[0])
 			runtime.KeepAlive(keep)
 		}
 	}
 
-	if hr := dlg.Show(parent); hr < 0 {
+	hr = dlg.Show(parent)
+	if hr < 0 {
 		if uint32(hr) == hrCancelled {
 			return nil, nil
 		}
@@ -332,7 +337,8 @@ func runFileDialog(parent uintptr, save, pickFolders, multi bool, opts FileDialo
 		return nil, nil
 	}
 	defer (*iShellItem)(ptr(psi)).Release()
-	if p := shellItemPath(psi); p != "" {
+	p := shellItemPath(psi)
+	if p != "" {
 		return []string{p}, nil
 	}
 	return nil, nil
@@ -353,7 +359,8 @@ func openDialogResults(odlg *iFileOpenDialog) []string {
 	for i := uint32(0); i < n; i++ {
 		var psi uintptr
 		if arr.GetItemAt(i, &psi) >= 0 && psi != 0 {
-			if p := shellItemPath(psi); p != "" {
+			p := shellItemPath(psi)
+			if p != "" {
 				paths = append(paths, p)
 			}
 			(*iShellItem)(ptr(psi)).Release()

@@ -51,7 +51,8 @@ func TestMain(m *testing.M) {
 // embedScenario embeds a web view into a caller-provided GtkWindow and verifies
 // the engine does not take ownership and Destroy leaves the host window intact.
 func embedScenario() string {
-	if err := ensureInit(); err != nil {
+	err := ensureInit()
+	if err != nil {
 		return "init error: " + err.Error()
 	}
 	if !gtkInit() {
@@ -214,7 +215,8 @@ window.addEventListener('load', async function(){
 // destroyed -- all without gtk_native_dialog_run (which is modal and needs user
 // input). The full dialog is exercised manually via examples/filedialog.
 func dialogConfigScenario() string {
-	if err := ensureDialogInit(); err != nil {
+	err := ensureDialogInit()
+	if err != nil {
 		return "dialog init error: " + err.Error()
 	}
 	if !gtkInit() {

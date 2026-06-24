@@ -83,7 +83,8 @@ var (
 // ensureDialogInit resolves the file-dialog symbols once, branching on the GTK
 // version detected by ensureInit.
 func ensureDialogInit() error {
-	if err := ensureInit(); err != nil {
+	err := ensureInit()
+	if err != nil {
 		return err
 	}
 	dialogInitOnce.Do(func() {
@@ -103,7 +104,8 @@ func ensureDialogInit() error {
 		// survives the widening into a uintptr register.
 		dialogResponseFn = purego.NewCallback(func(dialog, responseID, token uintptr) uintptr {
 			dialogRespMu.Lock()
-			if st := dialogRespStates[token]; st != nil {
+			st := dialogRespStates[token]
+			if st != nil {
 				st.response = int(int32(uint32(responseID)))
 				st.done = true
 			}
@@ -167,7 +169,8 @@ func (w *webview) OpenDirectory(opts FileDialogOptions) (string, error) {
 // it is dismissed (gtk_native_dialog_run is modal and spins its own loop, so it
 // must run on the GTK thread).
 func (w *webview) showFileDialog(action int, multi bool, opts FileDialogOptions) ([]string, error) {
-	if err := ensureDialogInit(); err != nil {
+	err := ensureDialogInit()
+	if err != nil {
 		return nil, err
 	}
 	ch := make(chan []string, 1)
@@ -297,7 +300,8 @@ func chooserPaths(chooser uintptr, multi bool) []string {
 			return nil
 		}
 		defer gObjectUnref(file)
-		if p := gfilePath(file); p != "" {
+		p := gfilePath(file)
+		if p != "" {
 			return []string{p}
 		}
 		return nil
@@ -342,7 +346,8 @@ func gListModelPaths(model uintptr) []string {
 		if file == 0 {
 			continue
 		}
-		if p := gfilePath(file); p != "" {
+		p := gfilePath(file)
+		if p != "" {
 			paths = append(paths, p)
 		}
 		gObjectUnref(file)
@@ -361,7 +366,8 @@ func gSListPaths(list uintptr) []string {
 		data := *(*uintptr)(asPtr(node))
 		next := *(*uintptr)(asPtr(node + unsafe.Sizeof(uintptr(0))))
 		if data != 0 {
-			if p := cstr(data); p != "" {
+			p := cstr(data)
+			if p != "" {
 				paths = append(paths, p)
 			}
 			gFree(data)

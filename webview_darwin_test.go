@@ -114,19 +114,22 @@ func embedScenario() string {
 
 func TestMultiWindowRefCount(t *testing.T) {
 	const want = "0->2->0"
-	if got, _ := resMultiWindow.Load().(string); got != want {
+	got, _ := resMultiWindow.Load().(string)
+	if got != want {
 		t.Fatalf("window ref-count = %q, want %q", got, want)
 	}
 }
 
 func TestEmbedExternalWindow(t *testing.T) {
-	if got, _ := resEmbed.Load().(string); got != "embed-ok" {
+	got, _ := resEmbed.Load().(string)
+	if got != "embed-ok" {
 		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
 	}
 }
 
 func TestOpenPanelCompletion(t *testing.T) {
-	if got, _ := resOpenPanel.Load().(string); got != "panel-ok" {
+	got, _ := resOpenPanel.Load().(string)
+	if got != "panel-ok" {
 		t.Fatalf("open-panel completion = %q, want %q", got, "panel-ok")
 	}
 }
@@ -177,16 +180,19 @@ func dialogConfigScenario() string {
 }
 
 func TestDialogConfig(t *testing.T) {
-	if got, _ := resDialogCfg.Load().(string); got != "dialog-config-ok" {
+	got, _ := resDialogCfg.Load().(string)
+	if got != "dialog-config-ok" {
 		t.Fatalf("dialog config = %q, want %q", got, "dialog-config-ok")
 	}
 }
 
 func TestFirstOr(t *testing.T) {
-	if got := firstOr(nil, "def"); got != "def" {
+	got := firstOr(nil, "def")
+	if got != "def" {
 		t.Fatalf("firstOr(nil) = %q, want %q", got, "def")
 	}
-	if got := firstOr([]string{"a", "b"}, "def"); got != "a" {
+	got = firstOr([]string{"a", "b"}, "def")
+	if got != "a" {
 		t.Fatalf("firstOr([a b]) = %q, want %q", got, "a")
 	}
 }
@@ -315,21 +321,24 @@ window.addEventListener('load', async function(){
 }
 
 func TestBridge(t *testing.T) {
-	if got, _ := resBridge.Load().(string); got != "42|hi x" {
+	got, _ := resBridge.Load().(string)
+	if got != "42|hi x" {
 		t.Fatalf("JS<->Go bridge = %q, want %q", got, "42|hi x")
 	}
 }
 
 func TestErrorAndUnbind(t *testing.T) {
 	const want = "temp=undefined boom=kaboom"
-	if got, _ := resErrorUnbind.Load().(string); got != want {
+	got, _ := resErrorUnbind.Load().(string)
+	if got != want {
 		t.Fatalf("error/unbind = %q, want %q", got, want)
 	}
 }
 
 func TestRichBindingTypes(t *testing.T) {
 	const want = "p=2,3 s=10"
-	if got, _ := resRichTypes.Load().(string); got != want {
+	got, _ := resRichTypes.Load().(string)
+	if got != want {
 		t.Fatalf("rich types = %q, want %q", got, want)
 	}
 }

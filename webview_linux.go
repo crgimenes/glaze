@@ -158,7 +158,8 @@ func ensureInit() error {
 		// 'GdkDisplayManager'"). So load libgtk-4 only when webkitgtk-6.0 is
 		// actually present -- otherwise GTK4 never enters the process.
 		var gtk, webkit, jsc uintptr
-		if wk6, werr := openFirst("libwebkitgtk-6.0.so.4"); werr == nil {
+		wk6, werr := openFirst("libwebkitgtk-6.0.so.4")
+		if werr == nil {
 			gtk4 = true
 			webkit = wk6
 			if gtk, err = openFirst("libgtk-4.so.1"); err != nil {
@@ -238,7 +239,8 @@ func ensureInit() error {
 			purego.RegisterLibFunc(&webkitJavascriptResultGetJSValue, webkit, "webkit_javascript_result_get_js_value")
 		}
 
-		if _, e := purego.Dlsym(webkit, "webkit_web_view_evaluate_javascript"); e == nil {
+		_, e := purego.Dlsym(webkit, "webkit_web_view_evaluate_javascript")
+		if e == nil {
 			purego.RegisterLibFunc(&webkitWebViewEvaluateJavascript, webkit, "webkit_web_view_evaluate_javascript")
 			haveEvaluateJavascript = true
 		} else {
@@ -258,13 +260,15 @@ func ensureInit() error {
 			return gSourceRemove
 		})
 		messageHandlerFn = purego.NewCallback(func(manager, jsResult, userData uintptr) uintptr {
-			if w := lookupEngine(userData); w != nil {
+			w := lookupEngine(userData)
+			if w != nil {
 				w.onMessage(jsResultToString(jsResult))
 			}
 			return 0
 		})
 		windowDestroyFn = purego.NewCallback(func(widget, userData uintptr) uintptr {
-			if w := lookupEngine(userData); w != nil {
+			w := lookupEngine(userData)
+			if w != nil {
 				w.onWindowDestroy()
 			}
 			return 0
@@ -394,7 +398,8 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 //
 // The first successful call pins the calling goroutine to its OS thread.
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
-	if err := ensureInit(); err != nil {
+	err := ensureInit()
+	if err != nil {
 		return nil, err
 	}
 	uiThreadOnce.Do(runtime.LockOSThread)
@@ -404,7 +409,8 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 		bindings:   map[string]func(id, req string) (any, error){},
 	}
 	w.id = registerEngine(w)
-	if err := w.windowInit(uintptr(window)); err != nil {
+	err = w.windowInit(uintptr(window))
+	if err != nil {
 		unregisterEngine(w.id)
 		return nil, err
 	}
@@ -595,7 +601,8 @@ func (w *webview) Bind(name string, f any) error {
 		return err
 	}
 	w.mu.Lock()
-	if _, exists := w.bindings[name]; exists {
+	_, exists := w.bindings[name]
+	if exists {
 		w.mu.Unlock()
 		return errors.New("function name already bound")
 	}
@@ -608,7 +615,8 @@ func (w *webview) Bind(name string, f any) error {
 
 func (w *webview) Unbind(name string) error {
 	w.mu.Lock()
-	if _, exists := w.bindings[name]; !exists {
+	_, exists := w.bindings[name]
+	if !exists {
 		w.mu.Unlock()
 		return errors.New("function name not bound")
 	}
@@ -657,7 +665,8 @@ func (w *webview) onMessage(body string) {
 		Method string          `json:"method"`
 		Params json.RawMessage `json:"params"`
 	}
-	if err := json.Unmarshal([]byte(body), &m); err != nil {
+	err := json.Unmarshal([]byte(body), &m)
+	if err != nil {
 		return
 	}
 	w.mu.Lock()

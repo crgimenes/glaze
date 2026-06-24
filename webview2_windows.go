@@ -412,7 +412,8 @@ type rect struct{ Left, Top, Right, Bottom int32 }
 
 func ensureCOMInit() error {
 	comInitOnce.Do(func() {
-		if err := ensureWinInit(); err != nil {
+		err := ensureWinInit()
+		if err != nil {
 			comInitErr = err
 			return
 		}
@@ -488,7 +489,8 @@ func findEmbeddedBrowserDLL() (string, error) {
 			continue
 		}
 		dll := filepath.Join(val, "EBWebView", arch(), "EmbeddedBrowserWebView.dll")
-		if _, err := os.Stat(dll); err == nil {
+		_, err = os.Stat(dll)
+		if err == nil {
 			return dll, nil
 		}
 	}
@@ -598,7 +600,8 @@ func userDataFolder() string {
 const coinitApartmentThreaded = 0x2
 
 func (w *webview) embed(debug bool) error {
-	if err := ensureCOMInit(); err != nil {
+	err := ensureCOMInit()
+	if err != nil {
 		return err
 	}
 	coInitializeEx(0, coinitApartmentThreaded) // tolerate S_OK/S_FALSE/RPC_E_CHANGED_MODE
@@ -609,7 +612,8 @@ func (w *webview) embed(debug bool) error {
 	w.scriptH = newHandler(w.id, kindScript, &iidScriptAdded)
 
 	dbg("embed: requesting environment (userDataFolder=%s)", userDataFolder())
-	if err := createEnvironment(userDataFolder(), w.envH); err != nil {
+	err = createEnvironment(userDataFolder(), w.envH)
+	if err != nil {
 		return err
 	}
 
@@ -765,7 +769,8 @@ func (w *webview) Bind(name string, f any) error {
 		return err
 	}
 	w.mu.Lock()
-	if _, exists := w.bindings[name]; exists {
+	_, exists := w.bindings[name]
+	if exists {
 		w.mu.Unlock()
 		return errors.New("function name already bound")
 	}
@@ -781,7 +786,8 @@ func (w *webview) Bind(name string, f any) error {
 
 func (w *webview) Unbind(name string) error {
 	w.mu.Lock()
-	if _, exists := w.bindings[name]; !exists {
+	_, exists := w.bindings[name]
+	if !exists {
 		w.mu.Unlock()
 		return errors.New("function name not bound")
 	}
@@ -798,7 +804,8 @@ func (w *webview) onMessage(body string) {
 		Method string          `json:"method"`
 		Params json.RawMessage `json:"params"`
 	}
-	if err := json.Unmarshal([]byte(body), &m); err != nil {
+	err := json.Unmarshal([]byte(body), &m)
+	if err != nil {
 		return
 	}
 	w.mu.Lock()

@@ -117,13 +117,16 @@ func TestBindMethods(t *testing.T) {
 	if names[1] != "api_ping" {
 		t.Fatalf("BindMethods() names[1] = %q, want %q", names[1], "api_ping")
 	}
-	if _, ok := w.bound["api_hidden"]; ok {
+	_, ok := w.bound["api_hidden"]
+	if ok {
 		t.Fatal("BindMethods() bound unexported method")
 	}
-	if _, ok := w.bound["api_get_user_by_id"]; !ok {
+	_, ok = w.bound["api_get_user_by_id"]
+	if !ok {
 		t.Fatal("BindMethods() missing binding for api_get_user_by_id")
 	}
-	if _, ok := w.bound["api_ping"]; !ok {
+	_, ok = w.bound["api_ping"]
+	if !ok {
 		t.Fatal("BindMethods() missing binding for api_ping")
 	}
 }

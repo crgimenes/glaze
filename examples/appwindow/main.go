@@ -152,7 +152,8 @@ func render(w http.ResponseWriter, items []todoItem) {
 		Items:   items,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "index", data); err != nil {
+	err := templates.ExecuteTemplate(w, "index", data)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -198,7 +199,8 @@ func main() {
 	mux.HandleFunc("POST /toggle", func(w http.ResponseWriter, r *http.Request) {
 		var id int
 		fmt.Sscanf(r.FormValue("id"), "%d", &id)
-		if i := findByID(store, id); i >= 0 {
+		i := findByID(store, id)
+		if i >= 0 {
 			store[i].Done = !store[i].Done
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -208,7 +210,8 @@ func main() {
 	mux.HandleFunc("POST /delete", func(w http.ResponseWriter, r *http.Request) {
 		var id int
 		fmt.Sscanf(r.FormValue("id"), "%d", &id)
-		if i := findByID(store, id); i >= 0 {
+		i := findByID(store, id)
+		if i >= 0 {
 			store = append(store[:i], store[i+1:]...)
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)

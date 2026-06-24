@@ -97,7 +97,8 @@ func stageUIFiles() (string, string, error) {
 
 		base := filepath.Base(name)
 		target := filepath.Join(tmpDir, base)
-		if writeErr := os.WriteFile(target, data, 0o600); writeErr != nil {
+		writeErr := os.WriteFile(target, data, 0o600)
+		if writeErr != nil {
 			_ = os.RemoveAll(tmpDir)
 			return "", "", fmt.Errorf("write ui file %s: %w", target, writeErr)
 		}
@@ -120,7 +121,8 @@ func main() {
 	w.SetTitle("Glaze - Zero TCP")
 	w.SetSize(760, 560, glaze.HintNone)
 
-	if _, err := glaze.BindMethods(w, "tasks", service); err != nil {
+	_, err = glaze.BindMethods(w, "tasks", service)
+	if err != nil {
 		log.Fatal(err)
 	}
 

@@ -58,7 +58,8 @@ type cgRect struct {
 var selCache sync.Map // string -> objc.SEL
 
 func sel(name string) objc.SEL {
-	if v, ok := selCache.Load(name); ok {
+	v, ok := selCache.Load(name)
+	if ok {
 		return v.(objc.SEL)
 	}
 	s := objc.RegisterName(name)
@@ -121,7 +122,8 @@ func ensureInit() error {
 			"/System/Library/Frameworks/Cocoa.framework/Cocoa",
 			"/System/Library/Frameworks/WebKit.framework/WebKit",
 		} {
-			if _, err := purego.Dlopen(fw, purego.RTLD_GLOBAL|purego.RTLD_LAZY); err != nil {
+			_, err := purego.Dlopen(fw, purego.RTLD_GLOBAL|purego.RTLD_LAZY)
+			if err != nil {
 				initErr = fmt.Errorf("webview: dlopen %s: %w", fw, err)
 				return
 			}
@@ -161,7 +163,8 @@ func registerClasses() error {
 			{
 				Cmd: sel("applicationDidFinishLaunching:"),
 				Fn: func(self objc.ID, _cmd objc.SEL, notification objc.ID) {
-					if w := lookupEngine(self); w != nil {
+					w := lookupEngine(self)
+					if w != nil {
 						w.onApplicationDidFinishLaunching(notification.Send(sel("object")))
 					}
 				},
@@ -177,7 +180,8 @@ func registerClasses() error {
 		[]objc.MethodDef{{
 			Cmd: sel("userContentController:didReceiveScriptMessage:"),
 			Fn: func(self objc.ID, _cmd objc.SEL, ucc objc.ID, message objc.ID) {
-				if w := lookupEngine(self); w != nil {
+				w := lookupEngine(self)
+				if w != nil {
 					w.onMessage(cstr(message.Send(sel("body")).Send(sel("UTF8String"))))
 				}
 			},
@@ -192,7 +196,8 @@ func registerClasses() error {
 		[]objc.MethodDef{{
 			Cmd: sel("windowWillClose:"),
 			Fn: func(self objc.ID, _cmd objc.SEL, notification objc.ID) {
-				if w := lookupEngine(self); w != nil {
+				w := lookupEngine(self)
+				if w != nil {
 					w.onWindowWillClose()
 				}
 			},
@@ -343,7 +348,8 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 // all direct UI calls on that goroutine and re-enter through Dispatch from
 // background goroutines.
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
-	if err := ensureInit(); err != nil {
+	err := ensureInit()
+	if err != nil {
 		return nil, err
 	}
 	uiThreadOnce.Do(runtime.LockOSThread)
@@ -583,7 +589,8 @@ func (w *webview) Bind(name string, f any) error {
 		return err
 	}
 	w.mu.Lock()
-	if _, exists := w.bindings[name]; exists {
+	_, exists := w.bindings[name]
+	if exists {
 		w.mu.Unlock()
 		return errors.New("function name already bound")
 	}
@@ -596,7 +603,8 @@ func (w *webview) Bind(name string, f any) error {
 
 func (w *webview) Unbind(name string) error {
 	w.mu.Lock()
-	if _, exists := w.bindings[name]; !exists {
+	_, exists := w.bindings[name]
+	if !exists {
 		w.mu.Unlock()
 		return errors.New("function name not bound")
 	}
@@ -724,7 +732,8 @@ func (w *webview) onMessage(body string) {
 		Method string          `json:"method"`
 		Params json.RawMessage `json:"params"`
 	}
-	if err := json.Unmarshal([]byte(body), &m); err != nil {
+	err := json.Unmarshal([]byte(body), &m)
+	if err != nil {
 		return
 	}
 	w.mu.Lock()

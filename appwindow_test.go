@@ -126,7 +126,8 @@ func TestRemoveUnixSocketRejectsRegularFile(t *testing.T) {
 		t.Fatalf("CreateTemp() unexpected error: %v", err)
 	}
 	path := tmp.Name()
-	if err := tmp.Close(); err != nil {
+	err = tmp.Close()
+	if err != nil {
 		t.Fatalf("Close() unexpected error: %v", err)
 	}
 	defer func() { _ = os.Remove(path) }()
