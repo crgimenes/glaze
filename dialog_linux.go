@@ -30,8 +30,14 @@ const (
 // --- bound dialog functions ------------------------------------------------
 
 var (
-	gtkFileChooserNativeNew         func(title string, parent uintptr, action int, accept, cancel string) uintptr
-	gtkNativeDialogRun              func(dialog uintptr) int
+	gtkFileChooserNativeNew func(title string, parent uintptr, action int, accept, cancel string) uintptr
+	// gtk_native_dialog_run was removed in GTK4 (deprecated in 4.10), so the modal
+	// is driven manually: set_modal + show + connect "response" + iterate the main
+	// loop until the response arrives. show/hide/set_modal exist in both GTK3 and
+	// GTK4 (it is exactly what gtk_native_dialog_run does internally).
+	gtkNativeDialogShow             func(dialog uintptr)
+	gtkNativeDialogHide             func(dialog uintptr)
+	gtkNativeDialogSetModal         func(dialog uintptr, modal bool)
 	gtkFileChooserSetSelectMultiple func(chooser uintptr, multiple bool)
 	gtkFileChooserSetCurrentName    func(chooser uintptr, name string)
 
@@ -55,8 +61,23 @@ var (
 	gListModelGetNItems             func(model uintptr) uint32
 	gListModelGetItem               func(model uintptr, pos uint32) uintptr
 
-	dialogInitOnce sync.Once
-	dialogInitErr  error
+	dialogInitOnce   sync.Once
+	dialogInitErr    error
+	dialogResponseFn uintptr // GtkNativeDialog "response" callback
+)
+
+// dialogResp captures a single modal dialog's response. Dialogs run one at a
+// time on the UI thread (modal), keyed by an integer token passed as the
+// signal's user_data so only integers cross into C (like the engine registry).
+type dialogResp struct {
+	response int
+	done     bool
+}
+
+var (
+	dialogRespMu     sync.Mutex
+	dialogRespStates = map[uintptr]*dialogResp{}
+	dialogRespSeq    uintptr
 )
 
 // ensureDialogInit resolves the file-dialog symbols once, branching on the GTK
@@ -67,13 +88,28 @@ func ensureDialogInit() error {
 	}
 	dialogInitOnce.Do(func() {
 		purego.RegisterLibFunc(&gtkFileChooserNativeNew, gtkLib, "gtk_file_chooser_native_new")
-		purego.RegisterLibFunc(&gtkNativeDialogRun, gtkLib, "gtk_native_dialog_run")
+		purego.RegisterLibFunc(&gtkNativeDialogShow, gtkLib, "gtk_native_dialog_show")
+		purego.RegisterLibFunc(&gtkNativeDialogHide, gtkLib, "gtk_native_dialog_hide")
+		purego.RegisterLibFunc(&gtkNativeDialogSetModal, gtkLib, "gtk_native_dialog_set_modal")
 		purego.RegisterLibFunc(&gtkFileChooserSetSelectMultiple, gtkLib, "gtk_file_chooser_set_select_multiple")
 		purego.RegisterLibFunc(&gtkFileChooserSetCurrentName, gtkLib, "gtk_file_chooser_set_current_name")
 		purego.RegisterLibFunc(&gtkFileFilterNew, gtkLib, "gtk_file_filter_new")
 		purego.RegisterLibFunc(&gtkFileFilterSetName, gtkLib, "gtk_file_filter_set_name")
 		purego.RegisterLibFunc(&gtkFileFilterAddPattern, gtkLib, "gtk_file_filter_add_pattern")
 		purego.RegisterLibFunc(&gtkFileChooserAddFilter, gtkLib, "gtk_file_chooser_add_filter")
+
+		// "response" delivers (GtkNativeDialog*, gint response_id, gpointer token).
+		// gint is 32-bit; mask before interpreting so a negative id (ACCEPT=-3)
+		// survives the widening into a uintptr register.
+		dialogResponseFn = purego.NewCallback(func(dialog, responseID, token uintptr) uintptr {
+			dialogRespMu.Lock()
+			if st := dialogRespStates[token]; st != nil {
+				st.response = int(int32(uint32(responseID)))
+				st.done = true
+			}
+			dialogRespMu.Unlock()
+			return 0
+		})
 
 		if gtk4 {
 			purego.RegisterLibFunc(&gtkFileChooserGetFile, gtkLib, "gtk_file_chooser_get_file")
@@ -165,10 +201,43 @@ func runFileChooser(parent uintptr, action int, multi bool, opts FileDialogOptio
 		applyChooserFilters(dlg, opts.Filters)
 	}
 
-	if gtkNativeDialogRun(dlg) != gtkResponseAccept {
+	if runNativeDialog(dlg) != gtkResponseAccept {
 		return nil
 	}
 	return chooserPaths(dlg, multi)
+}
+
+// runNativeDialog shows a GtkNativeDialog modally and pumps the main loop until
+// the user responds, returning the response id. This replaces the GTK4-removed
+// gtk_native_dialog_run with its underlying mechanism (show + "response" +
+// nested iteration), so it works on both GTK3 and GTK4.
+func runNativeDialog(dlg uintptr) int {
+	dialogRespMu.Lock()
+	dialogRespSeq++
+	token := dialogRespSeq
+	st := &dialogResp{}
+	dialogRespStates[token] = st
+	dialogRespMu.Unlock()
+	defer func() {
+		dialogRespMu.Lock()
+		delete(dialogRespStates, token)
+		dialogRespMu.Unlock()
+	}()
+
+	gSignalConnectData(dlg, "response", dialogResponseFn, token, 0, 0)
+	gtkNativeDialogSetModal(dlg, true)
+	gtkNativeDialogShow(dlg)
+	for {
+		dialogRespMu.Lock()
+		done := st.done
+		dialogRespMu.Unlock()
+		if done {
+			break
+		}
+		gMainContextIteration(0, true)
+	}
+	gtkNativeDialogHide(dlg)
+	return st.response
 }
 
 func setChooserFolder(chooser uintptr, dir string) {
