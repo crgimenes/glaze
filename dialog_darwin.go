@@ -136,7 +136,7 @@ func urlArrayPaths(urls objc.ID) []string {
 	}
 	n := int(urls.Send(sel("count")))
 	paths := make([]string, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		p := urlPath(urls.Send(sel("objectAtIndex:"), uint(i)))
 		if p != "" {
 			paths = append(paths, p)
