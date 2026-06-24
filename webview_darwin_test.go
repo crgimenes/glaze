@@ -2,6 +2,7 @@ package glaze
 
 import (
 	"errors"
+	"flag"
 	"os"
 	"runtime"
 	"strconv"
@@ -28,15 +29,30 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	runtime.LockOSThread()
-	resBridge.Store(bridgeScenario())
-	resErrorUnbind.Store(errorUnbindScenario())
-	resRichTypes.Store(richTypesScenario())
-	resMultiWindow.Store(multiWindowScenario())
-	resEmbed.Store(embedScenario())
-	resOpenPanel.Store(openPanelCompletionScenario())
-	resDialogCfg.Store(dialogConfigScenario())
+	// Honor -short so `go test -short ./...` is a fast, headless run: each GUI
+	// scenario drives a real NSApplication run loop and can take a few seconds, so
+	// running all of them unconditionally makes a plain `go test` slow and fragile
+	// under a tight timeout. The assertions skip when their scenario didn't run.
+	flag.Parse()
+	if !testing.Short() {
+		runtime.LockOSThread()
+		resBridge.Store(bridgeScenario())
+		resErrorUnbind.Store(errorUnbindScenario())
+		resRichTypes.Store(richTypesScenario())
+		resMultiWindow.Store(multiWindowScenario())
+		resEmbed.Store(embedScenario())
+		resOpenPanel.Store(openPanelCompletionScenario())
+		resDialogCfg.Store(dialogConfigScenario())
+	}
 	os.Exit(m.Run())
+}
+
+// requireGUI skips a GUI assertion when its scenario did not run (e.g. -short).
+func requireGUI(t *testing.T, got string) {
+	t.Helper()
+	if got == "" {
+		t.Skip("GUI scenarios skipped (-short)")
+	}
 }
 
 // openPanelCompletionScenario exercises the WKUIDelegate file-chooser
@@ -115,6 +131,7 @@ func embedScenario() string {
 func TestMultiWindowRefCount(t *testing.T) {
 	const want = "0->2->0"
 	got, _ := resMultiWindow.Load().(string)
+	requireGUI(t, got)
 	if got != want {
 		t.Fatalf("window ref-count = %q, want %q", got, want)
 	}
@@ -122,6 +139,7 @@ func TestMultiWindowRefCount(t *testing.T) {
 
 func TestEmbedExternalWindow(t *testing.T) {
 	got, _ := resEmbed.Load().(string)
+	requireGUI(t, got)
 	if got != "embed-ok" {
 		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
 	}
@@ -129,6 +147,7 @@ func TestEmbedExternalWindow(t *testing.T) {
 
 func TestOpenPanelCompletion(t *testing.T) {
 	got, _ := resOpenPanel.Load().(string)
+	requireGUI(t, got)
 	if got != "panel-ok" {
 		t.Fatalf("open-panel completion = %q, want %q", got, "panel-ok")
 	}
@@ -181,6 +200,7 @@ func dialogConfigScenario() string {
 
 func TestDialogConfig(t *testing.T) {
 	got, _ := resDialogCfg.Load().(string)
+	requireGUI(t, got)
 	if got != "dialog-config-ok" {
 		t.Fatalf("dialog config = %q, want %q", got, "dialog-config-ok")
 	}
@@ -322,6 +342,7 @@ window.addEventListener('load', async function(){
 
 func TestBridge(t *testing.T) {
 	got, _ := resBridge.Load().(string)
+	requireGUI(t, got)
 	if got != "42|hi x" {
 		t.Fatalf("JS<->Go bridge = %q, want %q", got, "42|hi x")
 	}
@@ -330,6 +351,7 @@ func TestBridge(t *testing.T) {
 func TestErrorAndUnbind(t *testing.T) {
 	const want = "temp=undefined boom=kaboom"
 	got, _ := resErrorUnbind.Load().(string)
+	requireGUI(t, got)
 	if got != want {
 		t.Fatalf("error/unbind = %q, want %q", got, want)
 	}
@@ -338,6 +360,7 @@ func TestErrorAndUnbind(t *testing.T) {
 func TestRichBindingTypes(t *testing.T) {
 	const want = "p=2,3 s=10"
 	got, _ := resRichTypes.Load().(string)
+	requireGUI(t, got)
 	if got != want {
 		t.Fatalf("rich types = %q, want %q", got, want)
 	}

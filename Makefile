@@ -1,4 +1,4 @@
-.PHONY: all build vet test test-integration lint fmt tidy examples
+.PHONY: all build vet test test-short lint fmt tidy examples
 
 # Default: the checks CI runs for the library.
 all: build vet test
@@ -9,12 +9,15 @@ build:
 vet:
 	go vet ./...
 
+# Full suite, including the per-OS GUI scenarios. Bounded with a timeout so a
+# wedged GUI test fails fast instead of running to go test's 10m default. On
+# Linux the GUI tests need a display; run under xvfb-run.
 test:
-	go test ./...
+	go test -timeout 180s ./...
 
-# GUI integration test. Needs a display; on Linux run under xvfb-run.
-test-integration:
-	go test -tags=integration -run TestWebview .
+# Fast, headless run: TestMain honors -short and skips the GUI scenarios.
+test-short:
+	go test -short ./...
 
 lint:
 	golangci-lint run ./...

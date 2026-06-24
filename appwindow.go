@@ -233,8 +233,11 @@ func setupTCPTransport(addr string) (appTransportSetup, error) {
 	}
 
 	return appTransportSetup{
-		listener:  ln,
-		baseURL:   fmt.Sprintf("http://127.0.0.1:%d", tcpAddr.Port),
+		listener: ln,
+		// Build the URL from the address actually bound (tcpAddr.String wraps an
+		// IPv6 host in brackets), so an "[::1]:0" listener is reached at
+		// http://[::1]:port rather than a non-existent 127.0.0.1 listener.
+		baseURL:   "http://" + tcpAddr.String(),
 		transport: AppTransportTCP,
 		backend:   tcpAddr.String(),
 		gateway:   tcpAddr.String(),
