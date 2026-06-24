@@ -85,6 +85,14 @@ func (s *bindMethodsWebViewStub) Bind(name string, f any) error {
 
 func (s *bindMethodsWebViewStub) Unbind(_ string) error { return nil }
 
+func (s *bindMethodsWebViewStub) OpenFile(_ FileDialogOptions) (string, error) { return "", nil }
+
+func (s *bindMethodsWebViewStub) OpenFiles(_ FileDialogOptions) ([]string, error) { return nil, nil }
+
+func (s *bindMethodsWebViewStub) SaveFile(_ FileDialogOptions) (string, error) { return "", nil }
+
+func (s *bindMethodsWebViewStub) OpenDirectory(_ FileDialogOptions) (string, error) { return "", nil }
+
 type bindMethodsService struct{}
 
 func (bindMethodsService) GetUserByID(_ int) int { return 1 }
