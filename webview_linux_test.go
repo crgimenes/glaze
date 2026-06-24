@@ -19,6 +19,7 @@ var (
 	resErrorUnbind atomic.Value // string
 	resRichTypes   atomic.Value // string
 	resEmbed       atomic.Value // string
+	resDialogCfg   atomic.Value // string
 )
 
 // hasDisplay reports whether a windowing system is available.
@@ -42,6 +43,7 @@ func TestMain(m *testing.M) {
 		resErrorUnbind.Store(errorUnbindScenario())
 		resRichTypes.Store(richTypesScenario())
 		resEmbed.Store(embedScenario())
+		resDialogCfg.Store(dialogConfigScenario())
 	}
 	os.Exit(m.Run())
 }
@@ -204,6 +206,35 @@ window.addEventListener('load', async function(){
 		return r
 	default:
 		return "no report"
+	}
+}
+
+// dialogConfigScenario verifies the GtkFileChooserNative plumbing: a chooser is
+// created, configured for multiple selection and given a type filter, then
+// destroyed -- all without gtk_native_dialog_run (which is modal and needs user
+// input). The full dialog is exercised manually via examples/filedialog.
+func dialogConfigScenario() string {
+	if err := ensureDialogInit(); err != nil {
+		return "dialog init error: " + err.Error()
+	}
+	if !gtkInit() {
+		return "gtk_init failed"
+	}
+	dlg := gtkFileChooserNativeNew("Pick", 0, gtkFileChooserActionOpen, "_Open", "_Cancel")
+	if dlg == 0 {
+		return "chooser nil"
+	}
+	defer gObjectUnref(dlg)
+	gtkFileChooserSetSelectMultiple(dlg, true)
+	applyChooserFilters(dlg, []FileFilter{{Name: "Images", Extensions: []string{"png", "jpg"}}})
+	return "dialog-config-ok"
+}
+
+func TestDialogConfig(t *testing.T) {
+	got, _ := resDialogCfg.Load().(string)
+	requireGUI(t, got)
+	if got != "dialog-config-ok" {
+		t.Fatalf("dialog config = %q, want %q", got, "dialog-config-ok")
 	}
 }
 

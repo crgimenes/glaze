@@ -2,6 +2,7 @@ package glaze
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 	"sync/atomic"
@@ -20,6 +21,7 @@ var (
 	resWinRichTypes   atomic.Value // string
 	resWinEmbed       atomic.Value // string
 	resWinClose       atomic.Value // string
+	resWinDialogCfg   atomic.Value // string
 )
 
 // guiAvailable reports whether the Edge WebView2 Runtime is installed. Without
@@ -48,6 +50,7 @@ func TestMain(m *testing.M) {
 		resWinErrorUnbind.Store(winErrorUnbindScenario())
 		resWinRichTypes.Store(winRichTypesScenario())
 		resWinEmbed.Store(winEmbedScenario())
+		resWinDialogCfg.Store(winDialogConfigScenario())
 		resWinClose.Store(winCloseViaUIScenario()) // last: it ends with WM_QUIT
 	}
 	os.Exit(m.Run())
@@ -113,6 +116,45 @@ func TestEmbedExternalWindow(t *testing.T) {
 	requireGUI(t, got)
 	if got != "embed-ok" {
 		t.Fatalf("embed external window = %q, want %q", got, "embed-ok")
+	}
+}
+
+// winDialogConfigScenario verifies that the Common Item Dialog COM plumbing
+// works: a FileOpenDialog is created via CoCreateInstance, its options round-trip
+// through SetOptions/GetOptions, and a title + file-type filters are applied --
+// all without calling Show (which is modal and needs user input). The full
+// dialog is exercised manually via examples/filedialog.
+func winDialogConfigScenario() string {
+	if err := ensureDialogInit(); err != nil {
+		return "dialog init error: " + err.Error()
+	}
+	coInitializeEx(0, coinitApartmentThreaded) // ensure STA on the test thread
+	var pdlg uintptr
+	if hr := coCreateInstance(&clsidFileOpenDialog, 0, clsctxInprocServer, &iidIFileOpenDialog, &pdlg); hr < 0 || pdlg == 0 {
+		return fmt.Sprintf("CoCreateInstance failed: 0x%08X", uint32(hr))
+	}
+	dlg := (*iFileDialog)(ptr(pdlg))
+	defer dlg.Release()
+
+	dlg.SetOptions(dlg.GetOptions() | fosForceFilesystem | fosPickFolders | fosAllowMultiSelect)
+	if got := dlg.GetOptions(); got&fosPickFolders == 0 || got&fosAllowMultiSelect == 0 {
+		return fmt.Sprintf("options roundtrip lost bits: 0x%08X", got)
+	}
+	dlg.SetTitle(utf16("Pick"))
+	specs, keep := buildFilterSpecs([]FileFilter{{Name: "Images", Extensions: []string{"png", "jpg"}}})
+	if len(specs) != 1 {
+		return "filter spec build failed"
+	}
+	dlg.SetFileTypes(uint32(len(specs)), &specs[0])
+	runtime.KeepAlive(keep)
+	return "dialog-config-ok"
+}
+
+func TestDialogConfig(t *testing.T) {
+	got, _ := resWinDialogCfg.Load().(string)
+	requireGUI(t, got)
+	if got != "dialog-config-ok" {
+		t.Fatalf("dialog config = %q, want %q", got, "dialog-config-ok")
 	}
 }
 
