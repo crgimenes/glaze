@@ -8,6 +8,7 @@ package menu
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -217,9 +218,14 @@ func nsstr(s string) objc.ID {
 	return class("NSString").Send(sel("stringWithUTF8String:"), s)
 }
 
-// autorelease wraps f in an NSAutoreleasePool. Set runs on the main thread (the
-// caller's UI thread), so the pool is created and drained on the same thread.
+// autorelease wraps f in an NSAutoreleasePool. LockOSThread pins the goroutine
+// for the pool's lifetime: an NSAutoreleasePool is thread-local, so if the
+// goroutine migrated between creating the pool and the deferred drain, the pool
+// would drain on the wrong thread and corrupt the autorelease stack (an
+// intermittent SIGSEGV). Defers run LIFO, so drain happens before UnlockOSThread.
 func autorelease(f func()) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	pool := class("NSAutoreleasePool").Send(sel("alloc")).Send(sel("init"))
 	defer pool.Send(sel("drain"))
 	f()
