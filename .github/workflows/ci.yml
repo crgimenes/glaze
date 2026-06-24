@@ -127,3 +127,11 @@ jobs:
             echo "== GOOS=$os =="
             GOOS=$os $(go env GOPATH)/bin/golangci-lint run ./...
           done
+      # examples/ is a separate module, so the root ./... above does not reach it.
+      - name: Lint examples (every GOOS)
+        run: |
+          cd examples
+          for os in darwin linux windows; do
+            echo "== examples GOOS=$os =="
+            GOOS=$os $(go env GOPATH)/bin/golangci-lint run ./...
+          done

@@ -395,7 +395,7 @@ func startAssetServer() (string, error) {
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(assets.FS)))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, html)
+		_, _ = fmt.Fprint(w, html)
 	})
 
 	go func() {
