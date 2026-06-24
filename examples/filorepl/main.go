@@ -399,7 +399,7 @@ func startAssetServer() (string, error) {
 	})
 
 	go func() {
-		srv := &http.Server{Handler: mux}
+		srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		_ = srv.Serve(ln)
 	}()
 

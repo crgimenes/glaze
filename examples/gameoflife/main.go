@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/crgimenes/glaze"
 )
@@ -34,7 +35,7 @@ func (g *Game) Init() [][]bool {
 	defer g.mu.Unlock()
 	for y := range gridHeight {
 		for x := range gridWidth {
-			g.cells[y][x] = rand.Float64() < 0.3
+			g.cells[y][x] = rand.Float64() < 0.3 // #nosec G404 -- demo seed, not security-sensitive
 		}
 	}
 	return g.snapshot()
@@ -168,7 +169,7 @@ func startServer() (string, error) {
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
 	go func() {
-		srv := &http.Server{Handler: mux}
+		srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		_ = srv.Serve(ln)
 	}()
 

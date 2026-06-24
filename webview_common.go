@@ -67,7 +67,7 @@ type WebView interface {
 	Navigate(url string)
 
 	// SetHtml sets the webview HTML directly.
-	// Example: w.SetHtml(w, "<h1>Hello</h1>");
+	// Example: w.SetHtml("<h1>Hello</h1>")
 	SetHtml(html string)
 
 	// Init injects JavaScript code at the initialization of the new page. Every

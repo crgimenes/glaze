@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/crgimenes/glaze"
 )
@@ -31,7 +32,7 @@ func startServer() (string, error) {
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
 	go func() {
-		srv := &http.Server{Handler: mux}
+		srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		_ = srv.Serve(ln)
 	}()
 

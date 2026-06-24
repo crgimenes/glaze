@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/crgimenes/devengine/assets"
 	"github.com/crgimenes/devengine/db/sqlite"
@@ -237,7 +238,7 @@ func startAssetServer() (string, error) {
 	})
 
 	go func() {
-		srv := &http.Server{Handler: mux}
+		srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		_ = srv.Serve(ln)
 	}()
 

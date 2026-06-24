@@ -45,7 +45,7 @@ func (w *webview) presentOpenPanel(opts FileDialogOptions, canFiles, canDirs, mu
 		autorelease(func() {
 			panel := class("NSOpenPanel").Send(sel("openPanel"))
 			configureOpenPanel(panel, canFiles, canDirs, multiple, opts)
-			if int(panel.Send(sel("runModal"))) == nsModalResponseOK {
+			if int(panel.Send(sel("runModal"))) == nsModalResponseOK { // #nosec G115 -- NSModalResponse is a small int
 				paths = urlArrayPaths(panel.Send(sel("URLs")))
 			}
 		})
@@ -70,7 +70,7 @@ func (w *webview) presentSavePanel(opts FileDialogOptions) string {
 			if types != 0 {
 				panel.Send(sel("setAllowedFileTypes:"), types)
 			}
-			if int(panel.Send(sel("runModal"))) == nsModalResponseOK {
+			if int(panel.Send(sel("runModal"))) == nsModalResponseOK { // #nosec G115 -- NSModalResponse is a small int
 				path = urlPath(panel.Send(sel("URL")))
 			}
 		})
@@ -134,7 +134,7 @@ func urlArrayPaths(urls objc.ID) []string {
 	if urls == 0 {
 		return nil
 	}
-	n := int(urls.Send(sel("count")))
+	n := int(urls.Send(sel("count"))) // #nosec G115 -- NSArray count is a small non-negative int
 	paths := make([]string, 0, n)
 	for i := range n {
 		p := urlPath(urls.Send(sel("objectAtIndex:"), uint(i)))

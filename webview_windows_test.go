@@ -2,6 +2,7 @@ package glaze
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
@@ -44,8 +45,9 @@ func requireGUI(t *testing.T, got string) {
 }
 
 func TestMain(m *testing.M) {
+	flag.Parse()
 	runtime.LockOSThread()
-	if guiAvailable() {
+	if !testing.Short() && guiAvailable() {
 		resWinBridge.Store(winBridgeScenario())
 		resWinErrorUnbind.Store(winErrorUnbindScenario())
 		resWinRichTypes.Store(winRichTypesScenario())

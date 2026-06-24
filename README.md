@@ -15,6 +15,7 @@ Dragging a C toolchain into a Go project just to open a window with HTML breaks 
 - Zero bundled native libraries -- binds the OS WebView directly (WKWebView / WebKitGTK / WebView2)
 - JavaScript to Go binding
 - Helpers for common desktop patterns: `BindMethods`, `RenderHTML`, `AppWindow`
+- Native file dialogs (`OpenFile`/`OpenFiles`/`SaveFile`/`OpenDirectory`) and a reusable native menu bar (`glaze/menu`)
 - Plays nicely with `go.work` multi-module setups
 
 ## Examples
@@ -161,7 +162,7 @@ What it does:
 - Creates a native window and navigates it to that local URL.
 - Runs the UI loop and shuts down the HTTP server when the window exits.
 - Supports window sizing, title, debug mode, and an optional readiness callback.
-  - `OnReady` receives the browser URL (always `http://127.0.0.1:...`).
+  - `OnReady` receives the browser URL (loopback; `http://127.0.0.1:...`, or `http://[::1]:...` if you pass an IPv6 `Addr`).
   - `OnReadyInfo` receives the resolved backend details (`Transport`, `Backend`, `Gateway`) so you can verify unix vs tcp from logs.
 
 The shortest path from an existing `net/http` app to a desktop app, with minimal changes to routing, templates, and assets.
@@ -178,6 +179,49 @@ err := glaze.AppWindow(glaze.AppOptions{
 	},
 })
 ```
+
+### File dialogs
+
+Native open/save/directory dialogs, exposed on the `WebView` interface (a glaze
+extension; upstream webview has none):
+
+```go
+path, _  := w.OpenFile(glaze.FileDialogOptions{
+    Title:   "Open an image",
+    Filters: []glaze.FileFilter{{Name: "Images", Extensions: []string{"png", "jpg"}}},
+})
+paths, _ := w.OpenFiles(glaze.FileDialogOptions{})                     // multi-select
+saveTo, _ := w.SaveFile(glaze.FileDialogOptions{Filename: "untitled.txt"})
+dir, _   := w.OpenDirectory(glaze.FileDialogOptions{})
+```
+
+Backends: `NSOpenPanel`/`NSSavePanel` (macOS), `IFileOpenDialog`/`IFileSaveDialog`
+(Windows), `GtkFileChooserNative` (Linux). Each shows the modal dialog, blocks the
+calling goroutine, and returns the chosen path(s) or `""` on cancel. Call them
+from `Bind` callbacks (a background goroutine), never from the UI thread. See
+[examples/filedialog](examples/filedialog/).
+
+### Native menus
+
+[`github.com/crgimenes/glaze/menu`](menu/) installs a native menu bar. It depends
+only on purego, not on the WebView, so a game or any other window-owning app can
+use it the same way.
+
+```go
+menu.Set([]menu.Item{
+    {Title: "App", Submenu: []menu.Item{
+        {Title: "About", OnClick: showAbout},
+        {Separator: true},
+        {Title: "Quit", Shortcut: "cmd+q", OnClick: w.Terminate},
+    }},
+    {Title: "Edit", Submenu: []menu.Item{
+        {Title: "Copy", Shortcut: "cmd+c", OnClick: doCopy},
+    }},
+}, menu.Options{Window: w.Window()})
+```
+
+macOS (`NSMenu`) and Windows (Win32 menu bar) are implemented; Linux returns
+`ErrUnsupported`. See [examples/menu](examples/menu/).
 
 ## Running the examples
 
@@ -212,6 +256,13 @@ system WebView can't run here -- no display, or the libraries aren't installed
 (WebKitGTK on Linux, the Edge WebView2 Runtime on Windows) -- so the command
 above stays green on a headless or minimal box instead of failing.
 
+For a fast, headless run, `-short` skips the GUI scenarios on every platform
+(each drives a real run loop and can take a few seconds):
+
+```bash
+go test -short ./...
+```
+
 To actually exercise the GUI tests on Linux, install WebKitGTK and run under a
 virtual display:
 
@@ -233,7 +284,9 @@ go build -ldflags="-H windowsgui" .
 - `webview_bridge.go` / `webview_bridge_webkit.go` -- the injected JS bridge (init/bind scripts)
 - `webview_darwin.go` / `webview_linux.go` / `webview_windows.go` (+ `webview2_windows.go`, `putbounds_amd64.go`, `putbounds_arm64.go`) -- the per-OS pure-Go backends
 - `appwindow.go` -- desktop window + local HTTP server helper
+- `dialog.go` / `dialog_darwin.go` / `dialog_windows.go` / `dialog_linux.go` -- native file dialogs
 - `helpers.go` -- utility helpers (`BindMethods`, `RenderHTML`)
+- `menu/` -- the standalone native menu-bar package (`github.com/crgimenes/glaze/menu`)
 - `examples/` -- runnable sample applications (their own Go module)
 
 Glaze loads the OS WebView framework directly and bundles or extracts no native library, so there is no extracted file to verify or swap.

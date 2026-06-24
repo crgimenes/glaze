@@ -84,12 +84,15 @@ func cstr(id objc.ID) string {
 	if id == 0 {
 		return ""
 	}
-	ptr := *(*unsafe.Pointer)(unsafe.Pointer(&id)) // circumvent go vet
+	// Reinterpret the objc.ID's bits without a uintptr->Pointer cast (keeps go
+	// vet's unsafeptr check quiet); the pointer is C string memory, not a Go
+	// pointer.
+	ptr := *(*unsafe.Pointer)(unsafe.Pointer(&id)) // #nosec G103
 	var n int
 	for *(*byte)(unsafe.Add(ptr, n)) != 0 {
 		n++
 	}
-	return string(unsafe.Slice((*byte)(ptr), n))
+	return string(unsafe.Slice((*byte)(ptr), n)) // #nosec G103 -- slice over the C string buffer
 }
 
 // autorelease wraps f in an NSAutoreleasePool, draining it afterward.
@@ -230,7 +233,7 @@ func runOpenPanel(self objc.ID, _cmd objc.SEL, webView, parameters, frame, compl
 		configureOpenPanel(panel, true, allowsDirs, allowsMultiple, FileDialogOptions{})
 
 		var urls objc.ID
-		if int(panel.Send(sel("runModal"))) == nsModalResponseOK {
+		if int(panel.Send(sel("runModal"))) == nsModalResponseOK { // #nosec G115 -- NSModalResponse is a small int
 			urls = panel.Send(sel("URLs"))
 		}
 		invokeOpenPanelCompletion(completionHandler, urls)
@@ -245,7 +248,7 @@ func invokeOpenPanelCompletion(completionHandler, urls objc.ID) {
 	sig := class("NSMethodSignature").Send(sel("signatureWithObjCTypes:"), "v@?@")
 	inv := class("NSInvocation").Send(sel("invocationWithMethodSignature:"), sig)
 	inv.Send(sel("setTarget:"), completionHandler)
-	inv.Send(sel("setArgument:atIndex:"), unsafe.Pointer(&urls), 1)
+	inv.Send(sel("setArgument:atIndex:"), unsafe.Pointer(&urls), 1) // #nosec G103 -- pass the arg's address to NSInvocation
 	inv.Send(sel("invoke"))
 }
 
@@ -517,7 +520,7 @@ func (w *webview) Dispatch(f func()) { dispatchMain(f) }
 
 func (w *webview) Window() unsafe.Pointer {
 	id := w.window
-	return *(*unsafe.Pointer)(unsafe.Pointer(&id))
+	return *(*unsafe.Pointer)(unsafe.Pointer(&id)) // #nosec G103 -- reinterpret the objc.ID's bits as the window pointer
 }
 
 func (w *webview) SetTitle(title string) {

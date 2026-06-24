@@ -2,6 +2,7 @@ package glaze
 
 import (
 	"errors"
+	"flag"
 	"os"
 	"runtime"
 	"sync/atomic"
@@ -37,8 +38,9 @@ func guiAvailable() bool {
 }
 
 func TestMain(m *testing.M) {
+	flag.Parse()
 	runtime.LockOSThread()
-	if guiAvailable() {
+	if !testing.Short() && guiAvailable() {
 		resBridge.Store(bridgeScenario())
 		resErrorUnbind.Store(errorUnbindScenario())
 		resRichTypes.Store(richTypesScenario())
