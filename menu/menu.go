@@ -16,9 +16,9 @@
 //		}},
 //	}, menu.Options{})
 //
-// Platform support: macOS (NSMenu) is implemented; Windows is planned; Linux
-// returns ErrUnsupported (the GTK3/GTK4 menu-bar story is too fragmented to do
-// cheaply).
+// Platform support: macOS (NSMenu) and Windows (a Win32 menu bar attached to the
+// caller's window) are implemented; Linux returns ErrUnsupported (the GTK3/GTK4
+// menu-bar story is too fragmented to do cheaply).
 package menu
 
 import (
