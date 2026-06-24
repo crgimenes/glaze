@@ -24,6 +24,7 @@ var (
 	resMultiWindow atomic.Value // string
 	resEmbed       atomic.Value // string
 	resOpenPanel   atomic.Value // string
+	resDialogCfg   atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -34,6 +35,7 @@ func TestMain(m *testing.M) {
 	resMultiWindow.Store(multiWindowScenario())
 	resEmbed.Store(embedScenario())
 	resOpenPanel.Store(openPanelCompletionScenario())
+	resDialogCfg.Store(dialogConfigScenario())
 	os.Exit(m.Run())
 }
 
@@ -126,6 +128,66 @@ func TestEmbedExternalWindow(t *testing.T) {
 func TestOpenPanelCompletion(t *testing.T) {
 	if got, _ := resOpenPanel.Load().(string); got != "panel-ok" {
 		t.Fatalf("open-panel completion = %q, want %q", got, "panel-ok")
+	}
+}
+
+// dialogConfigScenario verifies that configureOpenPanel maps FileDialogOptions
+// onto the NSOpenPanel correctly, without presenting the modal (runModal is the
+// only part that needs UI; the configuration is the part worth asserting). The
+// full dialog is exercised manually via examples/filedialog.
+func dialogConfigScenario() string {
+	res := "dialog-config-ok"
+	autorelease(func() {
+		// File mode: choose files, multiple selection, a two-extension filter
+		// (one of them carrying a leading dot, which must be stripped).
+		p := class("NSOpenPanel").Send(sel("openPanel"))
+		configureOpenPanel(p, true, false, true, FileDialogOptions{
+			Title:   "Pick a file",
+			Filters: []FileFilter{{Name: "Images", Extensions: []string{"png", ".jpg"}}},
+		})
+		switch {
+		case p.Send(sel("canChooseFiles")) == 0:
+			res = "file: canChooseFiles=false"
+		case p.Send(sel("canChooseDirectories")) != 0:
+			res = "file: canChooseDirectories=true (want false)"
+		case p.Send(sel("allowsMultipleSelection")) == 0:
+			res = "file: allowsMultipleSelection=false"
+		case int(p.Send(sel("allowedFileTypes")).Send(sel("count"))) != 2:
+			res = "file: allowedFileTypes count != 2"
+		}
+		if res != "dialog-config-ok" {
+			return
+		}
+		// Directory mode: files off, dirs on, and a wildcard filter must leave
+		// the type restriction unset (allowedFileTypes nil).
+		d := class("NSOpenPanel").Send(sel("openPanel"))
+		configureOpenPanel(d, false, true, false, FileDialogOptions{
+			Filters: []FileFilter{{Extensions: []string{"*"}}},
+		})
+		switch {
+		case d.Send(sel("canChooseFiles")) != 0:
+			res = "dir: canChooseFiles=true (want false)"
+		case d.Send(sel("canChooseDirectories")) == 0:
+			res = "dir: canChooseDirectories=false"
+		case d.Send(sel("allowedFileTypes")) != 0:
+			res = "dir: allowedFileTypes set (want nil for wildcard)"
+		}
+	})
+	return res
+}
+
+func TestDialogConfig(t *testing.T) {
+	if got, _ := resDialogCfg.Load().(string); got != "dialog-config-ok" {
+		t.Fatalf("dialog config = %q, want %q", got, "dialog-config-ok")
+	}
+}
+
+func TestFirstOr(t *testing.T) {
+	if got := firstOr(nil, "def"); got != "def" {
+		t.Fatalf("firstOr(nil) = %q, want %q", got, "def")
+	}
+	if got := firstOr([]string{"a", "b"}, "def"); got != "a" {
+		t.Fatalf("firstOr([a b]) = %q, want %q", got, "a")
 	}
 }
 

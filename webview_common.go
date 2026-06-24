@@ -92,6 +92,34 @@ type WebView interface {
 
 	// Removes a callback that was previously set by Bind.
 	Unbind(name string) error
+
+	// --- Native file dialogs (a glaze extension; upstream webview has none) ---
+	//
+	// These present a native, application-modal file chooser. Unlike the other
+	// WebView methods, they BLOCK the calling goroutine until the user dismisses
+	// the dialog and therefore must NOT be called from the UI thread (doing so
+	// deadlocks). Call them from a Bind callback - which runs on a background
+	// goroutine - or any other goroutine. They require the main loop to be
+	// running (Run has been called).
+	//
+	// A cancelled dialog returns an empty result and a nil error; a non-nil
+	// error means the dialog could not be presented.
+
+	// OpenFile shows an "open file" dialog and returns the chosen path, or "" if
+	// the user cancelled.
+	OpenFile(opts FileDialogOptions) (string, error)
+
+	// OpenFiles shows an "open file" dialog that allows selecting multiple files
+	// and returns the chosen paths, or nil if the user cancelled.
+	OpenFiles(opts FileDialogOptions) ([]string, error)
+
+	// SaveFile shows a "save file" dialog and returns the chosen path, or "" if
+	// the user cancelled.
+	SaveFile(opts FileDialogOptions) (string, error)
+
+	// OpenDirectory shows a directory chooser and returns the chosen directory
+	// path, or "" if the user cancelled.
+	OpenDirectory(opts FileDialogOptions) (string, error)
 }
 
 var errorType = reflect.TypeFor[error]()

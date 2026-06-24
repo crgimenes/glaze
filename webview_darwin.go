@@ -222,9 +222,7 @@ func runOpenPanel(self objc.ID, _cmd objc.SEL, webView, parameters, frame, compl
 		allowsDirs := parameters.Send(sel("allowsDirectories")) != 0
 
 		panel := class("NSOpenPanel").Send(sel("openPanel"))
-		panel.Send(sel("setCanChooseFiles:"), true)
-		panel.Send(sel("setCanChooseDirectories:"), allowsDirs)
-		panel.Send(sel("setAllowsMultipleSelection:"), allowsMultiple)
+		configureOpenPanel(panel, true, allowsDirs, allowsMultiple, FileDialogOptions{})
 
 		var urls objc.ID
 		if int(panel.Send(sel("runModal"))) == nsModalResponseOK {
