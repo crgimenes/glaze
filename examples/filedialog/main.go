@@ -1,8 +1,12 @@
-// Native file-dialog example.
+// Native file-dialog example: the programmatic path driven from Go.
 //
-// Demonstrates glaze's programmatic file dialogs: OpenFile, OpenFiles,
-// SaveFile and OpenDirectory. Each HTML button calls a bound Go function that
-// opens the native dialog and returns the chosen path(s) back to the page.
+// Demonstrates glaze's file-dialog API: OpenFile, OpenFiles, SaveFile and
+// OpenDirectory. Each HTML button calls a bound Go function that opens the
+// native dialog and returns the chosen path(s) back to the page.
+//
+// Unlike an in-page <input type="file"> (see examples/filepicker), these run
+// from Go and return full filesystem PATHS, and can also save a file or choose
+// a directory -- things the browser file input cannot do.
 //
 // The dialog methods block the calling goroutine, so they are called from Bind
 // callbacks (which run on a background goroutine) - never from the UI thread.
@@ -74,7 +78,7 @@ func main() {
 </head>
 <body>
   <h1>File dialogs</h1>
-  <p>Each button opens a native dialog and shows what Go returned.</p>
+  <p>Each button opens a native dialog from Go and shows the full path(s) it returned.</p>
   <button onclick="run(window.openFile, 'Open file')">Open file</button>
   <button onclick="run(window.openFiles, 'Open files')">Open files</button>
   <button onclick="run(window.saveFile, 'Save file')">Save file</button>
