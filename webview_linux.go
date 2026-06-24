@@ -114,6 +114,11 @@ var (
 	dispatchSourceFn uintptr
 	messageHandlerFn uintptr
 	windowDestroyFn  uintptr
+
+	// Library handles kept after ensureInit so other files (e.g. the file
+	// dialogs in dialog_linux.go) can lazily resolve extra symbols without
+	// re-dlopening or duplicating the soname-selection logic.
+	gtkLib, glibLib uintptr
 )
 
 func openFirst(names ...string) (uintptr, error) {
@@ -178,6 +183,8 @@ func ensureInit() error {
 				return
 			}
 		}
+
+		gtkLib, glibLib = gtk, glib
 
 		purego.RegisterLibFunc(&gIdleAddFull, glib, "g_idle_add_full")
 		purego.RegisterLibFunc(&gMainContextIteration, glib, "g_main_context_iteration")

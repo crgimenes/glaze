@@ -7,9 +7,8 @@
 // The dialog methods block the calling goroutine, so they are called from Bind
 // callbacks (which run on a background goroutine) - never from the UI thread.
 //
-// Platform status: macOS is implemented (NSOpenPanel/NSSavePanel). On Windows
-// and Linux the methods currently return an "unsupported" error until their
-// native backends land, which the page shows as the failure text.
+// Native on every platform: macOS NSOpenPanel/NSSavePanel, Windows IFileOpenDialog/
+// IFileSaveDialog (Common Item Dialog COM), Linux GtkFileChooserNative.
 package main
 
 import (
