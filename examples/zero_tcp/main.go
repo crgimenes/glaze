@@ -130,7 +130,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer os.RemoveAll(uiDir)
+	defer func() { _ = os.RemoveAll(uiDir) }()
 
 	w.Navigate(indexURL)
 	w.Run()

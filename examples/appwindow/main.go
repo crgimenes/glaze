@@ -198,7 +198,7 @@ func main() {
 	// Toggle done state.
 	mux.HandleFunc("POST /toggle", func(w http.ResponseWriter, r *http.Request) {
 		var id int
-		fmt.Sscanf(r.FormValue("id"), "%d", &id)
+		_, _ = fmt.Sscanf(r.FormValue("id"), "%d", &id)
 		i := findByID(store, id)
 		if i >= 0 {
 			store[i].Done = !store[i].Done
@@ -209,7 +209,7 @@ func main() {
 	// Delete an item.
 	mux.HandleFunc("POST /delete", func(w http.ResponseWriter, r *http.Request) {
 		var id int
-		fmt.Sscanf(r.FormValue("id"), "%d", &id)
+		_, _ = fmt.Sscanf(r.FormValue("id"), "%d", &id)
 		i := findByID(store, id)
 		if i >= 0 {
 			store = append(store[:i], store[i+1:]...)
