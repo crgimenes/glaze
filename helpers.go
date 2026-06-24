@@ -46,7 +46,8 @@ func BindMethods(w WebView, prefix string, obj any) ([]string, error) {
 		name := prefix + "_" + camelToSnake(method.Name)
 
 		fn := v.Method(i).Interface()
-		if err := w.Bind(name, fn); err != nil {
+		err := w.Bind(name, fn)
+		if err != nil {
 			return bound, fmt.Errorf("binding %s: %w", name, err)
 		}
 		bound = append(bound, name)
@@ -87,7 +88,8 @@ func camelToSnake(s string) string {
 // This allows reusing Go html/template definitions without an HTTP server.
 func RenderHTML(tpl *template.Template, name string, data any) (string, error) {
 	var buf bytes.Buffer
-	if err := tpl.ExecuteTemplate(&buf, name, data); err != nil {
+	err := tpl.ExecuteTemplate(&buf, name, data)
+	if err != nil {
 		return "", fmt.Errorf("render %s: %w", name, err)
 	}
 	return buf.String(), nil

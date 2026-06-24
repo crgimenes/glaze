@@ -84,7 +84,8 @@ func winCloseViaUIScenario() string {
 // winEmbedScenario embeds a web view into a caller-provided HWND and verifies
 // the engine does not take ownership and Destroy leaves the host window intact.
 func winEmbedScenario() string {
-	if err := ensureWinInit(); err != nil {
+	err := ensureWinInit()
+	if err != nil {
 		return "init error: " + err.Error()
 	}
 	host := createWindowExW(0, utf16("STATIC"), utf16("host"), wsOverlappedWindow,
@@ -125,19 +126,22 @@ func TestEmbedExternalWindow(t *testing.T) {
 // all without calling Show (which is modal and needs user input). The full
 // dialog is exercised manually via examples/filedialog.
 func winDialogConfigScenario() string {
-	if err := ensureDialogInit(); err != nil {
+	err := ensureDialogInit()
+	if err != nil {
 		return "dialog init error: " + err.Error()
 	}
 	coInitializeEx(0, coinitApartmentThreaded) // ensure STA on the test thread
 	var pdlg uintptr
-	if hr := coCreateInstance(&clsidFileOpenDialog, 0, clsctxInprocServer, &iidIFileOpenDialog, &pdlg); hr < 0 || pdlg == 0 {
+	hr := coCreateInstance(&clsidFileOpenDialog, 0, clsctxInprocServer, &iidIFileOpenDialog, &pdlg)
+	if hr < 0 || pdlg == 0 {
 		return fmt.Sprintf("CoCreateInstance failed: 0x%08X", uint32(hr))
 	}
 	dlg := (*iFileDialog)(ptr(pdlg))
 	defer dlg.Release()
 
 	dlg.SetOptions(dlg.GetOptions() | fosForceFilesystem | fosPickFolders | fosAllowMultiSelect)
-	if got := dlg.GetOptions(); got&fosPickFolders == 0 || got&fosAllowMultiSelect == 0 {
+	got := dlg.GetOptions()
+	if got&fosPickFolders == 0 || got&fosAllowMultiSelect == 0 {
 		return fmt.Sprintf("options roundtrip lost bits: 0x%08X", got)
 	}
 	dlg.SetTitle(utf16("Pick"))

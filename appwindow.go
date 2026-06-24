@@ -306,16 +306,19 @@ func prepareUnixSocketPath(socketPath string) (string, error) {
 			return "", fmt.Errorf("webview: create temp socket path: %w", err)
 		}
 		path = tmpFile.Name()
-		if err := tmpFile.Close(); err != nil {
+		err = tmpFile.Close()
+		if err != nil {
 			return "", fmt.Errorf("webview: close temp file: %w", err)
 		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		err = os.Remove(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("webview: remove temp file %s: %w", path, err)
 		}
 		return path, nil
 	}
 
-	if err := removeUnixSocket(path); err != nil {
+	err := removeUnixSocket(path)
+	if err != nil {
 		return "", err
 	}
 	return path, nil
@@ -335,7 +338,8 @@ func removeUnixSocket(path string) error {
 	if info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("webview: %s exists and is not a unix socket", path)
 	}
-	if err := os.Remove(path); err != nil {
+	err = os.Remove(path)
+	if err != nil {
 		return fmt.Errorf("webview: remove unix socket %s: %w", path, err)
 	}
 	return nil

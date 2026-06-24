@@ -66,7 +66,8 @@ func (w *webview) presentSavePanel(opts FileDialogOptions) string {
 			if opts.Filename != "" {
 				panel.Send(sel("setNameFieldStringValue:"), nsstr(opts.Filename))
 			}
-			if types := allowedFileTypes(opts.Filters); types != 0 {
+			types := allowedFileTypes(opts.Filters)
+			if types != 0 {
 				panel.Send(sel("setAllowedFileTypes:"), types)
 			}
 			if int(panel.Send(sel("runModal"))) == nsModalResponseOK {
@@ -85,7 +86,8 @@ func configureOpenPanel(panel objc.ID, canFiles, canDirs, multiple bool, opts Fi
 	panel.Send(sel("setCanChooseDirectories:"), canDirs)
 	panel.Send(sel("setAllowsMultipleSelection:"), multiple)
 	applyCommonPanelOptions(panel, opts)
-	if types := allowedFileTypes(opts.Filters); types != 0 {
+	types := allowedFileTypes(opts.Filters)
+	if types != 0 {
 		panel.Send(sel("setAllowedFileTypes:"), types)
 	}
 }
@@ -135,7 +137,8 @@ func urlArrayPaths(urls objc.ID) []string {
 	n := int(urls.Send(sel("count")))
 	paths := make([]string, 0, n)
 	for i := 0; i < n; i++ {
-		if p := urlPath(urls.Send(sel("objectAtIndex:"), uint(i))); p != "" {
+		p := urlPath(urls.Send(sel("objectAtIndex:"), uint(i)))
+		if p != "" {
 			paths = append(paths, p)
 		}
 	}

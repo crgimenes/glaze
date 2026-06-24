@@ -188,7 +188,8 @@ func main() {
 	w.SetTitle("Conway's Game of Life")
 	w.SetSize(800, 640, glaze.HintNone)
 
-	if _, err := glaze.BindMethods(w, "game", game); err != nil {
+	_, err = glaze.BindMethods(w, "game", game)
+	if err != nil {
 		log.Fatal(err)
 	}
 

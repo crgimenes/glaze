@@ -345,7 +345,8 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 // WebView2 COM apartment and the message pump are thread-bound (use Dispatch to
 // re-enter that thread from background goroutines).
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
-	if err := ensureWinInit(); err != nil {
+	err := ensureWinInit()
+	if err != nil {
 		return nil, err
 	}
 	uiThreadOnce.Do(runtime.LockOSThread)
@@ -384,7 +385,8 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 		setWindowLongPtrW(w.window, gwlpUserData, w.id)
 	}
 
-	if err := w.embed(debug); err != nil {
+	err = w.embed(debug)
+	if err != nil {
 		return nil, err
 	}
 	return w, nil
