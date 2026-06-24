@@ -46,13 +46,16 @@ jobs:
       - name: Headless safety (GUI tests must skip)
         run: go test -count=1 ./...
       - name: Test (xvfb)
+        timeout-minutes: 6
         env:
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
           LIBGL_ALWAYS_SOFTWARE: '1'
         # -count=1 so the GUI tests actually run here instead of reusing the
-        # cached skip from the headless step above.
-        run: xvfb-run -a go test -count=1 ./...
+        # cached skip from the headless step above. -timeout 150s so a wedged GTK
+        # call (e.g. gtk_init blocking on a missing display/bus) fails fast with a
+        # goroutine dump instead of running to go test's 10m default.
+        run: xvfb-run -a go test -count=1 -timeout 150s ./...
 
   macos:
     runs-on: macos-latest
@@ -81,10 +84,31 @@ jobs:
       # windows-latest ships the Edge WebView2 Runtime; the test opens a real
       # WebView2 window and exercises the JS<->Go bridge round trip.
       - name: Test
-        timeout-minutes: 6
+        timeout-minutes: 5
         env:
           WEBVIEW2_DEBUG: '1'
-        run: go test -timeout 180s .
+        shell: pwsh
+        run: |
+          # Compile the tests first so the watchdog below times only the run, not
+          # the (slower) Windows build.
+          go test -c -o glaze_test.exe .
+          # go test's own -timeout prints a goroutine dump, but a process wedged in
+          # a modal COM / Win32 call (WebView2, a file dialog) can fail to actually
+          # exit. Run it under an external hard watchdog (WaitForExit +
+          # Stop-Process) so a hang fails the job fast and still prints stdout/stderr.
+          $p = Start-Process -FilePath .\glaze_test.exe `
+            -ArgumentList '-test.v','-test.timeout=180s' `
+            -NoNewWindow -PassThru `
+            -RedirectStandardOutput out.txt -RedirectStandardError err.txt
+          $exited = $p.WaitForExit(210000)
+          if (Test-Path out.txt) { Get-Content out.txt }
+          if (Test-Path err.txt) { Get-Content err.txt }
+          if (-not $exited) {
+            Write-Host "::error::Windows test hung; force-killing after 210s"
+            Stop-Process -Id $p.Id -Force
+            exit 1
+          }
+          exit $p.ExitCode
 
   lint:
     runs-on: ubuntu-latest
