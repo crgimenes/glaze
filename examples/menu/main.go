@@ -43,8 +43,8 @@ func main() {
   <script>function show(s){ document.getElementById('out').textContent = s; }</script>
 </body></html>`)
 
-	// Set on the main thread before Run, so no Dispatch is needed; the callbacks
-	// then fire on the main thread when the app is running.
+	// Set on the UI thread before Run, so no Dispatch is needed. Window is the
+	// HWND on Windows (ignored on macOS, where the menu bar is app-global).
 	_, err = menu.Set([]menu.Item{
 		{Title: "Glaze", Submenu: []menu.Item{
 			{Title: "About This Demo", OnClick: func() { w.Eval(`show('About: glaze/menu demo')`) }},
@@ -57,7 +57,7 @@ func main() {
 			{Separator: true},
 			{Title: "Disabled item", Disabled: true},
 		}},
-	}, menu.Options{})
+	}, menu.Options{Window: w.Window()})
 	if err != nil {
 		log.Fatal(err)
 	}
