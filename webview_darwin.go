@@ -527,6 +527,16 @@ func (w *webview) SetTitle(title string) {
 	autorelease(func() { w.window.Send(sel("setTitle:"), nsstr(title)) })
 }
 
+func (w *webview) Focus() {
+	if w.window == 0 || w.webView == 0 {
+		return
+	}
+	// Largely redundant: an NSWindow makes its content view the first responder
+	// when it becomes key, and restores it on re-activation. Kept as the explicit,
+	// on-demand path and to mirror the other backends.
+	autorelease(func() { w.window.Send(sel("makeFirstResponder:"), w.webView) })
+}
+
 func (w *webview) SetSize(width, height int, hint Hint) {
 	autorelease(func() {
 		style := uint(nsWindowStyleMaskTitled | nsWindowStyleMaskClosable | nsWindowStyleMaskMiniaturizable)

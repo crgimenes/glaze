@@ -41,6 +41,7 @@ const (
 
 	wmDestroy       = 0x0002
 	wmSize          = 0x0005
+	wmSetFocus      = 0x0007
 	wmClose         = 0x0010
 	wmGetMinMaxInfo = 0x0024
 	wmApp           = 0x8000
@@ -252,6 +253,15 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 		return 0
 	case wmSize:
 		w.resizeWebView()
+		return 0
+	case wmSetFocus:
+		// The host window gained keyboard focus (launch, Alt-Tab back, a title-bar
+		// click); forward it into the WebView2 content so the keyboard and a screen
+		// reader's cursor land in the page, matching the macOS/Linux backends. A
+		// no-op until the controller exists (embed does the initial focus instead).
+		if w.controller != 0 {
+			asController(w.controller).MoveFocus(moveFocusReasonProgrammatic)
+		}
 		return 0
 	case wmGetMinMaxInfo:
 		// Enforce HintMin/HintMax, mirroring win32_edge.hh's WM_GETMINMAXINFO.
