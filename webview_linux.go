@@ -595,6 +595,16 @@ func (w *webview) windowShow() {
 	w.isWindowShown = true
 }
 
+func (w *webview) Focus() {
+	if w.webview == 0 {
+		return
+	}
+	// GtkWindow remembers its focus widget and restores it on re-activation, so
+	// the first-show grab in windowShow already covers Alt-Tab; this is the
+	// explicit, on-demand version.
+	gtkWidgetGrabFocus(w.webview)
+}
+
 func (w *webview) Bind(name string, f any) error {
 	wrapper, err := makeFuncWrapper(f)
 	if err != nil {

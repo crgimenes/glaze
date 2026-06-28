@@ -80,6 +80,13 @@ type WebView interface {
 	// to receive notifications about the results of the evaluation.
 	Eval(js string)
 
+	// Focus moves keyboard focus into the web content, so typing - and a screen
+	// reader's cursor - lands inside the page without the user having to click it
+	// first. Each platform already does this when its window first appears and
+	// when the window is re-activated; Focus is the explicit, on-demand version
+	// for pulling focus back into the page. Call it from the UI thread.
+	Focus()
+
 	// Bind binds a callback function so that it will appear under the given name
 	// as a global JavaScript function. Internally it uses webview_init().
 	// Callback receives a request string and a user-provided argument pointer.

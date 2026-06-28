@@ -210,6 +210,19 @@ func (i *iController) PutIsVisible(v bool) {
 	purego.SyscallN(i.vtbl.PutIsVisible, uintptr(unsafe.Pointer(i)), boolToUintptr(v))
 }
 
+// moveFocusReasonProgrammatic is COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC:
+// focus moved by the host, not by a Tab key. The reason is a plain enum (a
+// scalar), so MoveFocus is not arch-specific the way putBounds is.
+const moveFocusReasonProgrammatic = 0
+
+// MoveFocus pushes keyboard focus into the hosted WebView2 content. Without it,
+// the content stays unfocused until the user clicks the page - a keyboard and
+// screen-reader accessibility gap, since focus on the host HWND does not reach
+// the WebView2 child HWND on its own.
+func (i *iController) MoveFocus(reason uintptr) {
+	purego.SyscallN(i.vtbl.MoveFocus, uintptr(unsafe.Pointer(i)), reason)
+}
+
 // AddRef/Close/Release are the controller's IUnknown/lifetime methods.
 // (putBounds is arch-specific; see putbounds_amd64.go and putbounds_arm64.go.)
 func (i *iController) AddRef()  { purego.SyscallN(i.vtbl.AddRef, uintptr(unsafe.Pointer(i))) }
@@ -649,6 +662,10 @@ func (w *webview) embed(debug bool) error {
 	asController(w.controller).PutIsVisible(true)
 	showWindow(w.window, swShow)
 	updateWindow(w.window)
+	// Pull keyboard focus into the content now that the controller exists. The
+	// window already took WM_SETFOCUS during creation - before the controller was
+	// ready, so that path could not move focus inward - so do it once here.
+	asController(w.controller).MoveFocus(moveFocusReasonProgrammatic)
 	return nil
 }
 
@@ -660,6 +677,13 @@ func (w *webview) resizeWebView() {
 	if getClientRect(w.window, &r) != 0 {
 		asController(w.controller).putBounds(r)
 	}
+}
+
+func (w *webview) Focus() {
+	if w.controller == 0 {
+		return
+	}
+	asController(w.controller).MoveFocus(moveFocusReasonProgrammatic)
 }
 
 func (w *webview) Navigate(url string) {
