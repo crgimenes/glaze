@@ -18,6 +18,10 @@ Dragging a C toolchain into a Go project just to open a window with HTML breaks 
 - Native file dialogs (`OpenFile`/`OpenFiles`/`SaveFile`/`OpenDirectory`) and a reusable native menu bar (`glaze/menu`)
 - Plays nicely with `go.work` multi-module setups
 
+## Related: native
+
+Glaze stays focused on the window and the WebView. OS features that aren't window-bound -- and especially the more platform-specific or less standardized ones, like desktop notifications and the system tray -- live in [`native`](https://github.com/crgimenes/native), a sibling collection of small, cgo-free packages on the same purego foundation: clipboard, single-instance locks, opening a URL or revealing a file, memory-mapped files, keeping the machine awake, and more. Glaze imports what it needs from there; where a platform can't support something cleanly, the native package returns a clear `ErrUnsupported` instead of shipping something flaky.
+
 ## Examples
 
 | Desktop | Game of Life | Starfield |
