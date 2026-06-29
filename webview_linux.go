@@ -162,24 +162,29 @@ func ensureInit() error {
 		if werr == nil {
 			gtk4 = true
 			webkit = wk6
-			if gtk, err = openFirst("libgtk-4.so.1"); err != nil {
+			gtk, err = openFirst("libgtk-4.so.1")
+			if err != nil {
 				initErr = err
 				return
 			}
-			if jsc, err = openFirst("libjavascriptcoregtk-6.0.so.1"); err != nil {
+			jsc, err = openFirst("libjavascriptcoregtk-6.0.so.1")
+			if err != nil {
 				initErr = err
 				return
 			}
 		} else {
-			if gtk, err = openFirst("libgtk-3.so.0"); err != nil {
+			gtk, err = openFirst("libgtk-3.so.0")
+			if err != nil {
 				initErr = err
 				return
 			}
-			if webkit, err = openFirst("libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37"); err != nil {
+			webkit, err = openFirst("libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37")
+			if err != nil {
 				initErr = err
 				return
 			}
-			if jsc, err = openFirst("libjavascriptcoregtk-4.1.so.0", "libjavascriptcoregtk-4.0.so.18"); err != nil {
+			jsc, err = openFirst("libjavascriptcoregtk-4.1.so.0", "libjavascriptcoregtk-4.0.so.18")
+			if err != nil {
 				initErr = err
 				return
 			}
