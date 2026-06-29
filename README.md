@@ -14,7 +14,7 @@ Dragging a C toolchain into a Go project just to open a window with HTML breaks 
 - Windows, macOS, and Linux
 - Zero bundled native libraries -- binds the OS WebView directly (WKWebView / WebKitGTK / WebView2)
 - JavaScript to Go binding
-- Helpers for common desktop patterns: `BindMethods`, `RenderHTML`, `AppWindow`
+- Helpers for common desktop patterns: `BindMethods`, `RenderHTML`, `AppWindow`, a Go↔JS `Events` bridge
 - Native file dialogs (`OpenFile`/`OpenFiles`/`SaveFile`/`OpenDirectory`) and a reusable native menu bar (`glaze/menu`)
 - Plays nicely with `go.work` multi-module setups
 
@@ -184,6 +184,41 @@ err := glaze.AppWindow(glaze.AppOptions{
 })
 ```
 
+### Events
+
+A lightweight publish/subscribe bridge between Go and JavaScript, layered on
+`Bind`/`Init`/`Eval` with no extra native code. Create one per window, then emit
+and subscribe on either side; an event reaches every listener on both sides
+exactly once.
+
+```go
+ev, err := glaze.NewEvents(w)
+if err != nil {
+	log.Fatal(err)
+}
+
+// Go subscribes; each argument arrives as raw JSON to decode as you like.
+ev.On("ui:save", func(args ...json.RawMessage) {
+	var name string
+	_ = json.Unmarshal(args[0], &name)
+	log.Println("save requested for", name)
+})
+
+// Go emits to JS — safe to call from any goroutine.
+_ = ev.Emit("app:ready", map[string]any{"version": 3})
+```
+
+```js
+// JS subscribes to Go events and emits its own.
+glaze.events.on("app:ready", (info) => console.log("ready", info.version));
+glaze.events.emit("ui:save", "untitled.txt");
+```
+
+`On` returns a function that cancels that one subscription; `Off(name)` drops all
+of them. Go handlers run on the goroutine that emitted (or the binding goroutine
+for events coming from JS), so re-enter the UI thread with `Dispatch` if a handler
+touches the window. See [examples/events](examples/events/).
+
 ### File dialogs
 
 Native open/save/directory dialogs, exposed on the `WebView` interface (a glaze
@@ -290,6 +325,7 @@ go build -ldflags="-H windowsgui" .
 - `appwindow.go` -- desktop window + local HTTP server helper
 - `dialog.go` / `dialog_darwin.go` / `dialog_windows.go` / `dialog_linux.go` -- native file dialogs
 - `helpers.go` -- utility helpers (`BindMethods`, `RenderHTML`)
+- `events.go` -- the Go↔JS publish/subscribe events bridge (`NewEvents`)
 - `menu/` -- the standalone native menu-bar package (`github.com/crgimenes/glaze/menu`)
 - `examples/` -- runnable sample applications (their own Go module)
 
