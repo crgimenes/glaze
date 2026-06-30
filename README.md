@@ -4,9 +4,37 @@ Glaze is a desktop WebView binding for Go. It is a pure-Go port of [webview/webv
 
 It started as a fork of `go-webview` but has diverged enough to live as a separate codebase with its own goals and API.
 
+## Examples
+
+| Desktop | Game of Life | Starfield |
+| --- | --- | --- |
+| [![Desktop example preview](imgs/desktop.gif)](examples/desktop/) | [![Game of Life example preview](imgs/gameoflife.gif)](examples/gameoflife/) | [![Starfield example preview](imgs/starfield.gif)](examples/starfield/) |
+
+| Doom Fire | Mandelbrot | Falling Sand |
+| --- | --- | --- |
+| [![Doom Fire example preview](imgs/doomfire.gif)](examples/doomfire/) | [![Mandelbrot example preview](imgs/mandelbrot.gif)](examples/mandelbrot/) | [![Falling Sand example preview](imgs/fallingsand.gif)](examples/fallingsand/) |
+
+| Raycasting | Filo REPL | |
+| --- | --- | --- |
+| [![Raycasting example preview](imgs/raycasting.gif)](examples/raycasting/) | [![Filo REPL example preview](imgs/filorepl.gif)](examples/filorepl/) | |
+
 ## Why no CGo
 
-Dragging a C toolchain into a Go project just to open a window with HTML breaks too much of what I like about the Go ecosystem -- easy cross-compilation, reproducible builds, `go install` that works for whoever clones the repo. With `purego` glaze calls the WebView framework already present on the system via dlopen / LoadLibrary, so the binary stays self-contained with no C toolchain and no bundled native library.
+This is the whole point of the project, and it's the part that's easy to miss. Most native-WebView bindings reach for CGo, which quietly takes back the things that make Go pleasant to ship: cross-compiling suddenly needs a matching **C** cross-compiler for every target (mingw for Windows, a sysroot for Linux), builds stop being reproducible, and `go install` only works for people who already have that C toolchain set up.
+
+glaze keeps CGo out entirely - with [purego](https://github.com/ebitengine/purego) it `dlopen`/`LoadLibrary`s the WebView the OS already ships, so there is no C compiler in the loop. What that buys you:
+
+- **Cross-compile to every desktop from one machine** -- no C cross-toolchain, just `GOOS`/`GOARCH`:
+
+  ```sh
+  GOOS=windows GOARCH=amd64 go build   # from a Mac, from Linux, from anywhere
+  GOOS=linux   GOARCH=arm64 go build
+  GOOS=darwin  GOARCH=arm64 go build
+  ```
+
+- **`CGO_ENABLED=0` builds** -- reproducible output, and a `go get` / `go install` that just works for whoever clones the repo, with no compiler to install first.
+
+One caveat, "self-contained" isn't misread: glaze does **not** bundle a browser engine - it is not Electron. The binary ships no native library and stays small, but it uses the *system* WebView at runtime, so the target machine needs that present: WebView2 on Windows (preinstalled on current Windows 10/11), WebKitGTK on Linux (a package), WKWebView on macOS (built in).
 
 ## What's in the box
 
@@ -21,20 +49,6 @@ Dragging a C toolchain into a Go project just to open a window with HTML breaks 
 ## Related: native
 
 Glaze stays focused on the window and the WebView. OS features that aren't window-bound -- and especially the more platform-specific or less standardized ones, like desktop notifications and the system tray -- live in [`native`](https://github.com/crgimenes/native), a sibling collection of small, cgo-free packages on the same purego foundation: clipboard, single-instance locks, opening a URL or revealing a file, memory-mapped files, keeping the machine awake, and more. Glaze imports what it needs from there; where a platform can't support something cleanly, the native package returns a clear `ErrUnsupported` instead of shipping something flaky.
-
-## Examples
-
-| Desktop | Game of Life | Starfield |
-| --- | --- | --- |
-| [![Desktop example preview](imgs/desktop.gif)](examples/desktop/) | [![Game of Life example preview](imgs/gameoflife.gif)](examples/gameoflife/) | [![Starfield example preview](imgs/starfield.gif)](examples/starfield/) |
-
-| Doom Fire | Mandelbrot | Falling Sand |
-| --- | --- | --- |
-| [![Doom Fire example preview](imgs/doomfire.gif)](examples/doomfire/) | [![Mandelbrot example preview](imgs/mandelbrot.gif)](examples/mandelbrot/) | [![Falling Sand example preview](imgs/fallingsand.gif)](examples/fallingsand/) |
-
-| Raycasting | Filo REPL | |
-| --- | --- | --- |
-| [![Raycasting example preview](imgs/raycasting.gif)](examples/raycasting/) | [![Filo REPL example preview](imgs/filorepl.gif)](examples/filorepl/) | |
 
 ## Install
 
