@@ -4,7 +4,7 @@
 // background goroutine emits "go:tick" once a second to show Emit is safe to call
 // from any goroutine. Run it with:
 //
-//	go run ./examples/events
+//	cd examples && go run ./events
 package main
 
 import (

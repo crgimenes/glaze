@@ -44,11 +44,13 @@ One caveat, "self-contained" isn't misread: glaze does **not** bundle a browser 
 - JavaScript to Go binding
 - Helpers for common desktop patterns: `BindMethods`, `RenderHTML`, `AppWindow`, a Go↔JS `Events` bridge
 - Native file dialogs (`OpenFile`/`OpenFiles`/`SaveFile`/`OpenDirectory`) and a reusable native menu bar (`glaze/menu`)
+- Window control from Go: `SetTitle`, `SetSize`, `Focus` (explicit keyboard focus into the web content)
+- `NewWindow(debug, window)` embeds the WebView into an existing native window (`New` is the create-a-window shortcut)
 - Plays nicely with `go.work` multi-module setups
 
 ## Related: native
 
-Glaze stays focused on the window and the WebView. OS features that aren't window-bound -- and especially the more platform-specific or less standardized ones, like desktop notifications and the system tray -- live in [`native`](https://github.com/crgimenes/native), a sibling collection of small, cgo-free packages on the same purego foundation: clipboard, single-instance locks, opening a URL or revealing a file, memory-mapped files, keeping the machine awake, and more. Glaze imports what it needs from there; where a platform can't support something cleanly, the native package returns a clear `ErrUnsupported` instead of shipping something flaky.
+Glaze stays focused on the window and the WebView. OS features that aren't window-bound -- and especially the more platform-specific or less standardized ones, like desktop notifications and the system tray -- live in [`native`](https://github.com/crgimenes/native), a sibling collection of small, cgo-free packages on the same purego foundation: clipboard, single-instance locks, opening a URL or revealing a file, memory-mapped files, keeping the machine awake, and more. The two don't depend on each other -- an application imports each directly for what it needs; where a platform can't support something cleanly, the native package returns a clear `ErrUnsupported` instead of shipping something flaky.
 
 ## Install
 
@@ -77,6 +79,10 @@ Always loaded:
 
 - GTK4: `libgtk-4.so.1`, `libwebkitgtk-6.0.so.4`, `libjavascriptcoregtk-6.0.so.1`
 - GTK3: `libgtk-3.so.0`, `libwebkit2gtk-4.1.so.0` (or `libwebkit2gtk-4.0.so.37`), `libjavascriptcoregtk-4.1.so.0` (or `libjavascriptcoregtk-4.0.so.18`)
+
+On the GTK4 stack, the file dialogs additionally load `libgio-2.0.so.0` the
+first time a dialog opens (it ships with GLib, so it is present wherever the
+libraries above are).
 
 Installing the WebKitGTK package pulls GTK and GLib in as dependencies:
 
@@ -278,15 +284,17 @@ macOS (`NSMenu`) and Windows (Win32 menu bar) are implemented; Linux returns
 
 ## Running the examples
 
-From the repository root:
+`examples/` is a separate Go module (it keeps the library's `go.mod`
+purego-only), so run the examples from inside it:
 
 ```bash
-go run ./examples/simple
-go run ./examples/bind
-go run ./examples/zero_tcp
+cd examples
+go run ./simple
+go run ./bind
+go run ./zero_tcp
 ```
 
-From each example directory:
+Or from each example directory:
 
 ```bash
 cd examples/appwindow && go run .
@@ -294,7 +302,9 @@ cd examples/desktop && go run .
 cd examples/filorepl && go run .
 ```
 
-`examples/zero_tcp` shows a local-first UI built with `SetHtml + BindMethods` only -- no HTTP server, no loopback TCP gateway.
+`examples/zero_tcp` shows a local-first UI with no HTTP server and no loopback
+TCP gateway: it stages the frontend to disk, navigates to a `file://` URL, and
+talks to Go through `BindMethods` alone.
 
 ## Testing
 
