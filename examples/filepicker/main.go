@@ -34,9 +34,10 @@ func main() {
 	w.SetSize(560, 440, glaze.HintNone)
 
 	// Bound so the selection round-trips to Go as well.
-	if err := w.Bind("picked", func(names []string) {
+	err = w.Bind("picked", func(names []string) {
 		log.Println("picked files:", names)
-	}); err != nil {
+	})
+	if err != nil {
 		log.Fatal(err)
 	}
 

@@ -65,7 +65,8 @@ func TestNewEventsInstallsBridge(t *testing.T) {
 	if len(f.initJS) != 1 || !strings.Contains(f.initJS[0], "window.glaze") {
 		t.Fatalf("events JS not injected via Init: %q", f.initJS)
 	}
-	if _, ok := f.bound[eventsBindName]; !ok {
+	_, ok := f.bound[eventsBindName]
+	if !ok {
 		t.Fatalf("bridge %q not bound; bound names: %v", eventsBindName, keysOf(f.bound))
 	}
 }
