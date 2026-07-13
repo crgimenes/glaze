@@ -72,11 +72,12 @@ func guidEqual(a, b *guid) bool {
 }
 
 var (
-	iidIUnknown            = guid{0x00000000, 0x0000, 0x0000, [8]byte{0xC0, 0, 0, 0, 0, 0, 0, 0x46}}
-	iidEnvironmentComplete = guid{0x4E8A3389, 0xC9D8, 0x4BD2, [8]byte{0xB6, 0xB5, 0x12, 0x4F, 0xEE, 0x6C, 0xC1, 0x4D}}
-	iidControllerComplete  = guid{0x6C4819F3, 0xC9B7, 0x4260, [8]byte{0x81, 0x27, 0xC9, 0xF5, 0xBD, 0xE7, 0xF6, 0x8C}}
-	iidMessageReceived     = guid{0x57213F19, 0x00E6, 0x49FA, [8]byte{0x8E, 0x07, 0x89, 0x8E, 0xA0, 0x1E, 0xCB, 0xD2}}
-	iidScriptAdded         = guid{0xB99369F3, 0x9B11, 0x47B5, [8]byte{0xBC, 0x6F, 0x8E, 0x78, 0x95, 0xFC, 0xEA, 0x17}}
+	iidIUnknown             = guid{0x00000000, 0x0000, 0x0000, [8]byte{0xC0, 0, 0, 0, 0, 0, 0, 0x46}}
+	iidEnvironmentComplete  = guid{0x4E8A3389, 0xC9D8, 0x4BD2, [8]byte{0xB6, 0xB5, 0x12, 0x4F, 0xEE, 0x6C, 0xC1, 0x4D}}
+	iidControllerComplete   = guid{0x6C4819F3, 0xC9B7, 0x4260, [8]byte{0x81, 0x27, 0xC9, 0xF5, 0xBD, 0xE7, 0xF6, 0x8C}}
+	iidMessageReceived      = guid{0x57213F19, 0x00E6, 0x49FA, [8]byte{0x8E, 0x07, 0x89, 0x8E, 0xA0, 0x1E, 0xCB, 0xD2}}
+	iidScriptAdded          = guid{0xB99369F3, 0x9B11, 0x47B5, [8]byte{0xBC, 0x6F, 0x8E, 0x78, 0x95, 0xFC, 0xEA, 0x17}}
+	iidWebResourceRequested = guid{0xAB00B74C, 0x15F1, 0x4646, [8]byte{0x80, 0xE8, 0xE7, 0x63, 0x41, 0xD2, 0x5D, 0x71}}
 )
 
 // --- COM vtable layouts (exact IDL order; uintptr per slot) ----------------
@@ -158,7 +159,32 @@ type iCoreWebView2Vtbl struct {
 	PostWebMessageAsString              uintptr
 	AddWebMessageReceived               uintptr
 	RemoveWebMessageReceived            uintptr
-	// (remaining methods omitted; none are called)
+	// The interface continues; we declare through AddWebResourceRequestedFilter
+	// (needed for custom-scheme serving) so its vtbl offset is correct. Later
+	// methods are omitted; none are called.
+	CallDevToolsProtocolMethod             uintptr
+	GetBrowserProcessID                    uintptr
+	GetCanGoBack                           uintptr
+	GetCanGoForward                        uintptr
+	GoBack                                 uintptr
+	GoForward                              uintptr
+	GetDevToolsProtocolEventReceiver       uintptr
+	Stop                                   uintptr
+	AddNewWindowRequested                  uintptr
+	RemoveNewWindowRequested               uintptr
+	AddDocumentTitleChanged                uintptr
+	RemoveDocumentTitleChanged             uintptr
+	GetDocumentTitle                       uintptr
+	AddHostObjectToScript                  uintptr
+	RemoveHostObjectFromScript             uintptr
+	OpenDevToolsWindow                     uintptr
+	AddContainsFullScreenElementChanged    uintptr
+	RemoveContainsFullScreenElementChanged uintptr
+	GetContainsFullScreenElement           uintptr
+	AddWebResourceRequested                uintptr
+	RemoveWebResourceRequested             uintptr
+	AddWebResourceRequestedFilter          uintptr
+	RemoveWebResourceRequestedFilter       uintptr
 }
 
 type iCoreWebView2SettingsVtbl struct {
@@ -254,6 +280,12 @@ func (i *iCoreWebView2) Release() {
 func (i *iCoreWebView2) AddWebMessageReceived(handler uintptr, token *uint64) {
 	purego.SyscallN(i.vtbl.AddWebMessageReceived, uintptr(unsafe.Pointer(i)), handler, uintptr(unsafe.Pointer(token)))
 }
+func (i *iCoreWebView2) AddWebResourceRequested(handler uintptr, token *uint64) {
+	purego.SyscallN(i.vtbl.AddWebResourceRequested, uintptr(unsafe.Pointer(i)), handler, uintptr(unsafe.Pointer(token)))
+}
+func (i *iCoreWebView2) AddWebResourceRequestedFilter(uri *uint16, ctx uint32) {
+	purego.SyscallN(i.vtbl.AddWebResourceRequestedFilter, uintptr(unsafe.Pointer(i)), uintptr(unsafe.Pointer(uri)), uintptr(ctx))
+}
 func (i *iCoreWebView2) AddRef() { purego.SyscallN(i.vtbl.AddRef, uintptr(unsafe.Pointer(i))) }
 
 func (i *iSettings) PutAreDevToolsEnabled(v bool) {
@@ -281,6 +313,7 @@ const (
 	kindController
 	kindMessage
 	kindScript
+	kindWebResourceRequested
 )
 
 type comHandlerVtbl struct {
@@ -362,6 +395,7 @@ func handlerInvoke(this, a, b uintptr) uintptr {
 	case kindEnv:
 		// Invoke(this, HRESULT res, ICoreWebView2Environment* env)
 		if int32(a) >= 0 && b != 0 { // SUCCEEDED(res)
+			w.environment = b // kept for CreateWebResourceResponse (custom schemes)
 			if int32(asEnvironment(b).CreateController(w.window, handlerPtr(w.ctrlH))) < 0 {
 				w.ready = true // CreateController failed synchronously; unblock embed.
 			}
@@ -382,6 +416,16 @@ func handlerInvoke(this, a, b uintptr) uintptr {
 				cw.AddRef()
 				var token uint64
 				cw.AddWebMessageReceived(handlerPtr(w.msgH), &token)
+				// Custom-scheme serving: intercept the per-scheme https vhost and
+				// answer from the SchemeHandler (see serveSchemeWindows).
+				if len(w.schemeHandlers) > 0 {
+					w.wrrH = newHandler(w.id, kindWebResourceRequested, &iidWebResourceRequested)
+					var wrrTok uint64
+					cw.AddWebResourceRequested(handlerPtr(w.wrrH), &wrrTok)
+					for scheme := range w.schemeHandlers {
+						cw.AddWebResourceRequestedFilter(utf16(schemeVHost(scheme)+"/*"), 0) // 0 = ALL
+					}
+				}
 			}
 		}
 		w.ready = true
@@ -401,6 +445,11 @@ func handlerInvoke(this, a, b uintptr) uintptr {
 			w.lastScript = wideToString(b)
 		}
 		w.scriptDone = true
+	case kindWebResourceRequested:
+		// Invoke(this, ICoreWebView2* sender, ICoreWebView2WebResourceRequestedEventArgs* args)
+		if b != 0 {
+			w.serveSchemeWindows(b)
+		}
 	}
 	return 0 // S_OK
 }
@@ -687,6 +736,7 @@ func (w *webview) Focus() {
 }
 
 func (w *webview) Navigate(url string) {
+	url = w.rewriteSchemeURL(url) // map a registered scheme:// to its https vhost
 	if w.webview2 == 0 {
 		return
 	}
