@@ -113,6 +113,7 @@ var (
 	dispatchWork   uintptr
 
 	appDelegateClass, scriptHandlerClass, windowDelegateClass, uiDelegateClass objc.Class
+	schemeHandlerClass                                                         objc.Class
 )
 
 // Init prepares the macOS backend: loads AppKit + WebKit and registers the
@@ -219,8 +220,61 @@ func registerClasses() error {
 	if err != nil {
 		return fmt.Errorf("webview: ui delegate class: %w", err)
 	}
+
+	schemeHandlerClass, err = objc.RegisterClass(
+		"GlazeURLSchemeHandler", objc.GetClass("NSObject"),
+		[]*objc.Protocol{objc.GetProtocol("WKURLSchemeHandler")}, nil,
+		[]objc.MethodDef{
+			{Cmd: sel("webView:startURLSchemeTask:"), Fn: startURLSchemeTask},
+			{Cmd: sel("webView:stopURLSchemeTask:"), Fn: stopURLSchemeTask},
+		})
+	if err != nil {
+		return fmt.Errorf("webview: url scheme handler class: %w", err)
+	}
 	return nil
 }
+
+// startURLSchemeTask implements -webView:startURLSchemeTask:. It resolves the
+// owning webview via the scheme-handler object's registry entry, invokes the
+// registered SchemeHandler, and feeds the bytes back through the task.
+func startURLSchemeTask(self objc.ID, _cmd objc.SEL, webView objc.ID, task objc.ID) {
+	w := lookupEngine(self)
+	if w == nil {
+		return
+	}
+	req := task.Send(sel("request"))
+	nsurl := req.Send(sel("URL"))
+	urlStr := cstr(nsurl.Send(sel("absoluteString")).Send(sel("UTF8String")))
+	scheme := cstr(nsurl.Send(sel("scheme")).Send(sel("UTF8String")))
+
+	resp := w.serveScheme(scheme, urlStr)
+	autorelease(func() {
+		if resp == nil {
+			task.Send(sel("didFailWithError:"), objc.ID(0))
+			return
+		}
+		body := resp.Body
+		var dataPtr unsafe.Pointer
+		if len(body) > 0 {
+			dataPtr = unsafe.Pointer(&body[0]) // #nosec G103 -- dataWithBytes:length: copies the buffer
+		}
+		data := class("NSData").Send(sel("dataWithBytes:length:"), dataPtr, len(body))
+		// A 200 NSHTTPURLResponse with a Content-Type header — an http-style
+		// response is what makes WebKit treat the custom origin as secure.
+		headers := class("NSMutableDictionary").Send(sel("dictionary"))
+		headers.Send(sel("setObject:forKey:"), nsstr(schemeMIME(resp)), nsstr("Content-Type"))
+		urlResp := class("NSHTTPURLResponse").Send(sel("alloc")).Send(
+			sel("initWithURL:statusCode:HTTPVersion:headerFields:"),
+			nsurl, 200, nsstr("HTTP/1.1"), headers)
+		task.Send(sel("didReceiveResponse:"), urlResp)
+		task.Send(sel("didReceiveData:"), data)
+		task.Send(sel("didFinish"))
+	})
+}
+
+// stopURLSchemeTask implements -webView:stopURLSchemeTask: — we complete
+// synchronously, so there is nothing to cancel.
+func stopURLSchemeTask(self objc.ID, _cmd objc.SEL, webView objc.ID, task objc.ID) {}
 
 // runOpenPanel implements WKUIDelegate's file chooser via NSOpenPanel, invoking
 // the completion handler block (driven through NSInvocation) with the URLs.
@@ -339,6 +393,18 @@ type webview struct {
 	mu             sync.Mutex
 	bindings       map[string]func(id, req string) (any, error)
 	userScriptSrcs []string
+	schemeHandlers map[string]SchemeHandler
+}
+
+// serveScheme looks up the handler for a scheme and invokes it (nil if none).
+func (w *webview) serveScheme(scheme, url string) *SchemeResponse {
+	w.mu.Lock()
+	h := w.schemeHandlers[scheme]
+	w.mu.Unlock()
+	if h == nil {
+		return nil
+	}
+	return h(&SchemeRequest{URL: url})
 }
 
 // New creates a new window and a web view.
@@ -351,6 +417,12 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 // all direct UI calls on that goroutine and re-enter through Dispatch from
 // background goroutines.
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
+	return NewWithOptions(Options{Debug: debug, Window: window})
+}
+
+// NewWithOptions creates a web view configured by opts, including any custom
+// SchemeHandlers (which must be installed before the WKWebView is created).
+func NewWithOptions(opts Options) (WebView, error) {
 	err := ensureInit()
 	if err != nil {
 		return nil, err
@@ -358,13 +430,14 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 	uiThreadOnce.Do(runtime.LockOSThread)
 
 	w := &webview{
-		ownsWindow: true,
-		debug:      debug,
-		bindings:   map[string]func(id, req string) (any, error){},
+		ownsWindow:     true,
+		debug:          opts.Debug,
+		bindings:       map[string]func(id, req string) (any, error){},
+		schemeHandlers: opts.SchemeHandlers,
 	}
 	w.app = class("NSApplication").Send(sel("sharedApplication"))
-	w.windowInit(objc.ID(uintptr(window)))
-	w.windowSettings(debug)
+	w.windowInit(objc.ID(uintptr(opts.Window)))
+	w.windowSettings(opts.Debug)
 	if w.ownsWindow && w.isInitScriptAdded {
 		dispatchMain(func() {
 			if !w.isSizeSet {
@@ -433,6 +506,16 @@ func (w *webview) windowSettings(debug bool) {
 			prefs.Send(sel("setValue:forKey:"), yes, nsstr("developerExtrasEnabled"))
 		}
 		prefs.Send(sel("setValue:forKey:"), yes, nsstr("fullScreenEnabled"))
+
+		// Register custom scheme handlers on the configuration BEFORE the
+		// WKWebView is created — WKWebView copies its configuration at init, so
+		// this cannot be done afterward. One handler object per scheme; each is
+		// mapped back to this webview via the instance registry.
+		for scheme := range w.schemeHandlers {
+			sh := objc.ID(schemeHandlerClass).Send(sel("new"))
+			registerInstance(sh, w)
+			config.Send(sel("setURLSchemeHandler:forURLScheme:"), sh, nsstr(scheme))
+		}
 
 		wv := class("WKWebView").Send(sel("alloc"))
 		wv = wv.Send(sel("initWithFrame:configuration:"), rect, config)

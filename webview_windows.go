@@ -311,15 +311,21 @@ type webview struct {
 	ownsWindow bool
 
 	// WebView2 / COM state.
-	controller uintptr // ICoreWebView2Controller*
-	webview2   uintptr // ICoreWebView2*
-	envH       *comHandler
-	ctrlH      *comHandler
-	msgH       *comHandler
-	scriptH    *comHandler
-	ready      bool
-	scriptDone bool
-	lastScript string
+	controller  uintptr // ICoreWebView2Controller*
+	webview2    uintptr // ICoreWebView2*
+	environment uintptr // ICoreWebView2Environment* (for CreateWebResourceResponse)
+	envH        *comHandler
+	ctrlH       *comHandler
+	msgH        *comHandler
+	scriptH     *comHandler
+	wrrH        *comHandler // WebResourceRequested handler (custom schemes); nil if none
+	ready       bool
+	scriptDone  bool
+	lastScript  string
+
+	// schemeHandlers serve the app's assets from a custom secure origin instead
+	// of a loopback server; empty unless set via NewWithOptions.
+	schemeHandlers map[string]SchemeHandler
 
 	// Window size constraints from SetSize(HintMin/HintMax); enforced in
 	// wndProc's WM_GETMINMAXINFO handler.
@@ -355,6 +361,13 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 // WebView2 COM apartment and the message pump are thread-bound (use Dispatch to
 // re-enter that thread from background goroutines).
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
+	return NewWithOptions(Options{Debug: debug, Window: window})
+}
+
+// NewWithOptions creates a web view configured by opts, including any custom
+// SchemeHandlers (served over a per-scheme https virtual host; see
+// webview2_scheme_windows.go).
+func NewWithOptions(opts Options) (WebView, error) {
 	err := ensureWinInit()
 	if err != nil {
 		return nil, err
@@ -362,10 +375,13 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 	uiThreadOnce.Do(runtime.LockOSThread)
 
 	w := &webview{
-		ownsWindow:  window == nil,
-		bindings:    map[string]func(id, req string) (any, error){},
-		dispatchMap: map[uintptr]func(){},
+		ownsWindow:     opts.Window == nil,
+		bindings:       map[string]func(id, req string) (any, error){},
+		dispatchMap:    map[uintptr]func(){},
+		schemeHandlers: opts.SchemeHandlers,
 	}
+	window := opts.Window
+	debug := opts.Debug
 	w.id = registerEngine(w)
 	w.hinst = getModuleHandleW(0)
 

@@ -393,6 +393,111 @@ type webview struct {
 	mu             sync.Mutex
 	bindings       map[string]func(id, req string) (any, error)
 	userScriptSrcs []string
+	schemeHandlers map[string]SchemeHandler
+	schemeCB       uintptr // retained purego trampoline
+}
+
+// serveScheme looks up the handler for a scheme and invokes it (nil if none).
+func (w *webview) serveScheme(scheme, url string) *SchemeResponse {
+	w.mu.Lock()
+	h := w.schemeHandlers[scheme]
+	w.mu.Unlock()
+	if h == nil {
+		return nil
+	}
+	return h(&SchemeRequest{URL: url})
+}
+
+// registerSchemes wires each SchemeHandler onto the web view's WebKitWebContext
+// and marks the scheme as a secure context. Called before the first Navigate.
+// Best-effort: a missing symbol/handle leaves the scheme unregistered rather
+// than failing construction.
+func (w *webview) registerSchemes() {
+	if len(w.schemeHandlers) == 0 || w.webview == 0 {
+		return
+	}
+	webkitSonames := []string{"libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37"}
+	if gtk4 {
+		webkitSonames = []string{"libwebkitgtk-6.0.so.4"}
+	}
+	webkit, err := openFirst(webkitSonames...)
+	if err != nil {
+		return
+	}
+	gio, err := openFirst("libgio-2.0.so.0")
+	if err != nil {
+		return
+	}
+	gobject, err := openFirst("libgobject-2.0.so.0")
+	if err != nil {
+		return
+	}
+	gFreeAddr, err := purego.Dlsym(glibLib, "g_free")
+	if err != nil {
+		return
+	}
+
+	var (
+		getContext          func(uintptr) uintptr
+		registerScheme      func(ctx uintptr, scheme string, cb, data, notify uintptr)
+		getSecurityManager  func(uintptr) uintptr
+		registerAsSecure    func(sm uintptr, scheme string)
+		requestGetURI       func(uintptr) uintptr
+		requestGetScheme    func(uintptr) uintptr
+		schemeRequestFinish func(req, stream uintptr, streamLen int64, contentType string)
+		memInputStreamNew   func(data unsafe.Pointer, length int, destroy uintptr) uintptr
+		gMemdup2            func(mem unsafe.Pointer, size int) unsafe.Pointer
+		gObjectUnref        func(uintptr)
+	)
+	purego.RegisterLibFunc(&getContext, webkit, "webkit_web_view_get_context")
+	purego.RegisterLibFunc(&registerScheme, webkit, "webkit_web_context_register_uri_scheme")
+	purego.RegisterLibFunc(&getSecurityManager, webkit, "webkit_web_context_get_security_manager")
+	purego.RegisterLibFunc(&registerAsSecure, webkit, "webkit_security_manager_register_uri_scheme_as_secure")
+	purego.RegisterLibFunc(&requestGetURI, webkit, "webkit_uri_scheme_request_get_uri")
+	purego.RegisterLibFunc(&requestGetScheme, webkit, "webkit_uri_scheme_request_get_scheme")
+	purego.RegisterLibFunc(&schemeRequestFinish, webkit, "webkit_uri_scheme_request_finish")
+	purego.RegisterLibFunc(&memInputStreamNew, gio, "g_memory_input_stream_new_from_data")
+	purego.RegisterLibFunc(&gMemdup2, glibLib, "g_memdup2")
+	purego.RegisterLibFunc(&gObjectUnref, gobject, "g_object_unref")
+
+	ctx := getContext(w.webview)
+	if ctx == 0 {
+		return
+	}
+	sm := getSecurityManager(ctx)
+
+	// void (*WebKitURISchemeRequestCallback)(WebKitURISchemeRequest*, gpointer).
+	// user_data is the engine id, so this resolves back to the right webview.
+	w.schemeCB = purego.NewCallback(func(request uintptr, data uintptr) uintptr {
+		eng := lookupEngine(data)
+		if eng == nil {
+			return 0
+		}
+		url := cstr(requestGetURI(request))
+		scheme := cstr(requestGetScheme(request))
+		resp := eng.serveScheme(scheme, url)
+		var body []byte
+		mime := "application/octet-stream"
+		if resp != nil {
+			body, mime = resp.Body, schemeMIME(resp)
+		}
+		// Copy into glib-owned memory freed by g_free once the stream is done, so
+		// the bytes outlive this callback (the stream is read asynchronously).
+		var dataPtr unsafe.Pointer
+		if len(body) > 0 {
+			dataPtr = gMemdup2(unsafe.Pointer(&body[0]), len(body)) // #nosec G103 -- copied into glib memory, freed by g_free
+		}
+		stream := memInputStreamNew(dataPtr, len(body), uintptr(gFreeAddr))
+		schemeRequestFinish(request, stream, int64(len(body)), mime)
+		gObjectUnref(stream)
+		return 0
+	})
+	for scheme := range w.schemeHandlers {
+		registerScheme(ctx, scheme, w.schemeCB, w.id, 0)
+		if sm != 0 {
+			registerAsSecure(sm, scheme)
+		}
+	}
 }
 
 // New creates a new window and a web view.
@@ -403,6 +508,12 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 //
 // The first successful call pins the calling goroutine to its OS thread.
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
+	return NewWithOptions(Options{Debug: debug, Window: window})
+}
+
+// NewWithOptions creates a web view configured by opts, including any custom
+// SchemeHandlers (registered on the web view's context and marked as secure).
+func NewWithOptions(opts Options) (WebView, error) {
 	err := ensureInit()
 	if err != nil {
 		return nil, err
@@ -410,16 +521,18 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 	uiThreadOnce.Do(runtime.LockOSThread)
 
 	w := &webview{
-		ownsWindow: true,
-		bindings:   map[string]func(id, req string) (any, error){},
+		ownsWindow:     true,
+		bindings:       map[string]func(id, req string) (any, error){},
+		schemeHandlers: opts.SchemeHandlers,
 	}
 	w.id = registerEngine(w)
-	err = w.windowInit(uintptr(window))
+	err = w.windowInit(uintptr(opts.Window))
 	if err != nil {
 		unregisterEngine(w.id)
 		return nil, err
 	}
-	w.windowSettings(debug)
+	w.registerSchemes()
+	w.windowSettings(opts.Debug)
 	if w.ownsWindow {
 		// Apply a default size (which also shows the window) unless the caller
 		// sets one first, mirroring the macOS backend and webview's
