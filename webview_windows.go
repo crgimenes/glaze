@@ -326,6 +326,12 @@ type webview struct {
 	// schemeHandlers serve the app's assets from a custom secure origin instead
 	// of a loopback server; empty unless set via NewWithOptions.
 	schemeHandlers map[string]SchemeHandler
+	// schemeAuthority remembers the authority a scheme was navigated with (the
+	// https vhost the request is served over drops it), so serveSchemeWindows can
+	// rebuild the original "<scheme>://<authority>/..." URL the handler sees on
+	// every platform. Written in rewriteSchemeURL, read in serveSchemeWindows;
+	// guarded by mu.
+	schemeAuthority map[string]string
 
 	// Window size constraints from SetSize(HintMin/HintMax); enforced in
 	// wndProc's WM_GETMINMAXINFO handler.
@@ -375,10 +381,11 @@ func NewWithOptions(opts Options) (WebView, error) {
 	uiThreadOnce.Do(runtime.LockOSThread)
 
 	w := &webview{
-		ownsWindow:     opts.Window == nil,
-		bindings:       map[string]func(id, req string) (any, error){},
-		dispatchMap:    map[uintptr]func(){},
-		schemeHandlers: opts.SchemeHandlers,
+		ownsWindow:      opts.Window == nil,
+		bindings:        map[string]func(id, req string) (any, error){},
+		dispatchMap:     map[uintptr]func(){},
+		schemeHandlers:  opts.SchemeHandlers,
+		schemeAuthority: map[string]string{},
 	}
 	window := opts.Window
 	debug := opts.Debug
@@ -492,6 +499,11 @@ func (w *webview) Destroy() {
 		}
 		asController(w.controller).Release()
 		w.controller = 0
+	}
+	if w.environment != 0 {
+		// Release the reference taken in handlerInvoke (kindEnv).
+		asEnvironment(w.environment).Release()
+		w.environment = 0
 	}
 	if w.window != 0 && w.ownsWindow {
 		destroyWindow(w.window)

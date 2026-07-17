@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glaze custom scheme</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; padding: 2rem; line-height: 1.5; }
+    h1 { font-size: 1.2rem; margin: 0 0 0.25rem; }
+    p.lede { margin: 0 0 1.5rem; opacity: 0.7; }
+    table { border-collapse: collapse; width: 100%; max-width: 42rem; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(128,128,128,0.3); vertical-align: top; }
+    th { width: 13rem; font-weight: 600; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .ok { color: #1a7f37; } .bad { color: #cf222e; }
+    @media (prefers-color-scheme: dark) { .ok { color: #3fb950; } .bad { color: #f85149; } }
+  </style>
+</head>
+<body>
+  <h1>Served from a custom <code>app://</code> scheme</h1>
+  <p class="lede">No HTTP server, no TCP port &mdash; yet a full secure context.</p>
+  <table>
+    <tr><th>Page origin</th><td><code id="origin">&hellip;</code></td></tr>
+    <tr><th>Secure context</th><td id="secure">&hellip;</td></tr>
+    <tr><th>localStorage</th><td id="storage">&hellip;</td></tr>
+    <tr><th>crypto.subtle (SHA-256)</th><td id="crypto">&hellip;</td></tr>
+    <tr><th>Sub-resource (app.js)</th><td id="subresource" class="bad">did not load</td></tr>
+  </table>
+  <!-- Loaded from the same app:// origin, exercising relative asset serving. -->
+  <script src="app.js"></script>
+</body>
+</html>
