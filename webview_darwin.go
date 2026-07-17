@@ -38,6 +38,10 @@ const (
 
 	nsModalResponseOK = 1
 
+	// nsURLErrorFileDoesNotExist is Foundation's NSURLErrorFileDoesNotExist,
+	// reported to a URL-scheme task when its handler has no resource to serve.
+	nsURLErrorFileDoesNotExist = -1100
+
 	wkInjectionTimeAtDocumentStart = 0
 
 	defaultWidth  = 640
@@ -250,7 +254,11 @@ func startURLSchemeTask(self objc.ID, _cmd objc.SEL, webView objc.ID, task objc.
 	resp := w.serveScheme(scheme, urlStr)
 	autorelease(func() {
 		if resp == nil {
-			task.Send(sel("didFailWithError:"), objc.ID(0))
+			// WebKit requires a non-nil NSError here; passing nil can raise. A nil
+			// response means "not found", so report NSURLErrorFileDoesNotExist.
+			nsErr := class("NSError").Send(sel("errorWithDomain:code:userInfo:"),
+				nsstr("NSURLErrorDomain"), nsURLErrorFileDoesNotExist, objc.ID(0))
+			task.Send(sel("didFailWithError:"), nsErr)
 			return
 		}
 		body := resp.Body
@@ -266,6 +274,9 @@ func startURLSchemeTask(self objc.ID, _cmd objc.SEL, webView objc.ID, task objc.
 		urlResp := class("NSHTTPURLResponse").Send(sel("alloc")).Send(
 			sel("initWithURL:statusCode:HTTPVersion:headerFields:"),
 			nsurl, 200, nsstr("HTTP/1.1"), headers)
+		// alloc/init returns a +1 object; autorelease it so it does not leak once
+		// per request (didReceiveResponse: retains what it needs).
+		urlResp.Send(sel("autorelease"))
 		task.Send(sel("didReceiveResponse:"), urlResp)
 		task.Send(sel("didReceiveData:"), data)
 		task.Send(sel("didFinish"))
@@ -394,6 +405,10 @@ type webview struct {
 	bindings       map[string]func(id, req string) (any, error)
 	userScriptSrcs []string
 	schemeHandlers map[string]SchemeHandler
+	// schemeHandlerObjs are the WKURLSchemeHandler delegate objects (one per
+	// scheme), kept so Destroy can drop their instance-registry entries — the
+	// engine would otherwise stay pinned in the registry after Destroy.
+	schemeHandlerObjs []objc.ID
 }
 
 // serveScheme looks up the handler for a scheme and invokes it (nil if none).
@@ -513,7 +528,11 @@ func (w *webview) windowSettings(debug bool) {
 		// mapped back to this webview via the instance registry.
 		for scheme := range w.schemeHandlers {
 			sh := objc.ID(schemeHandlerClass).Send(sel("new"))
+			// Autorelease the +1 from -new; the configuration retains it (matching
+			// scriptHandler). Track it so Destroy can drop its registry entry.
+			sh.Send(sel("autorelease"))
 			registerInstance(sh, w)
+			w.schemeHandlerObjs = append(w.schemeHandlerObjs, sh)
 			config.Send(sel("setURLSchemeHandler:forURLScheme:"), sh, nsstr(scheme))
 		}
 
@@ -756,6 +775,12 @@ func (w *webview) Destroy() {
 			unregisterInstance(w.scriptHandler)
 			w.scriptHandler = 0
 		}
+		// Scheme-handler delegates are owned by the (now-released) configuration;
+		// like scriptHandler, only their registry entries need reclaiming.
+		for _, sh := range w.schemeHandlerObjs {
+			unregisterInstance(sh)
+		}
+		w.schemeHandlerObjs = nil
 	})
 	if w.ownsWindow {
 		w.depleteRunLoopEventQueue()

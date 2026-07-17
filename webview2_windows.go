@@ -228,6 +228,14 @@ func (i *iEnvironment) CreateController(hwnd, handler uintptr) uintptr {
 	r, _, _ := purego.SyscallN(i.vtbl.CreateCoreWebView2Controller, uintptr(unsafe.Pointer(i)), hwnd, handler)
 	return r
 }
+
+// AddRef/Release are the environment's IUnknown lifetime methods. The
+// environment is used long after its creation callback returns - at request
+// time, by CreateWebResourceResponse for custom schemes - so a reference is
+// held for the life of the webview (taken in handlerInvoke, dropped in Destroy)
+// rather than relying on the callback's transient one.
+func (i *iEnvironment) AddRef()  { purego.SyscallN(i.vtbl.AddRef, uintptr(unsafe.Pointer(i))) }
+func (i *iEnvironment) Release() { purego.SyscallN(i.vtbl.Release, uintptr(unsafe.Pointer(i))) }
 func (i *iController) GetCoreWebView2(out *uintptr) uintptr {
 	r, _, _ := purego.SyscallN(i.vtbl.GetCoreWebView2, uintptr(unsafe.Pointer(i)), uintptr(unsafe.Pointer(out)))
 	return r
@@ -395,7 +403,11 @@ func handlerInvoke(this, a, b uintptr) uintptr {
 	case kindEnv:
 		// Invoke(this, HRESULT res, ICoreWebView2Environment* env)
 		if int32(a) >= 0 && b != 0 { // SUCCEEDED(res)
-			w.environment = b // kept for CreateWebResourceResponse (custom schemes)
+			// Hold our own reference: the environment is used later, at request
+			// time, by CreateWebResourceResponse (custom schemes). Released in
+			// Destroy. Matches the controller/webview2 references below.
+			asEnvironment(b).AddRef()
+			w.environment = b
 			if int32(asEnvironment(b).CreateController(w.window, handlerPtr(w.ctrlH))) < 0 {
 				w.ready = true // CreateController failed synchronously; unblock embed.
 			}

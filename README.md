@@ -44,6 +44,7 @@ One caveat, "self-contained" isn't misread: glaze does **not** bundle a browser 
 - JavaScript to Go binding
 - Helpers for common desktop patterns: `BindMethods`, `RenderHTML`, `AppWindow`, a Go↔JS `Events` bridge
 - Native file dialogs (`OpenFile`/`OpenFiles`/`SaveFile`/`OpenDirectory`) and a reusable native menu bar (`glaze/menu`)
+- Custom URL schemes: serve embedded assets from a portless, secure-context `app://` origin (`NewWithOptions`)
 - Window control from Go: `SetTitle`, `SetSize`, `Focus` (explicit keyboard focus into the web content)
 - `NewWindow(debug, window)` embeds the WebView into an existing native window (`New` is the create-a-window shortcut)
 - Plays nicely with `go.work` multi-module setups
@@ -204,6 +205,53 @@ err := glaze.AppWindow(glaze.AppOptions{
 })
 ```
 
+### Custom URL schemes
+
+Serve a window's assets from your own `app://`-style origin -- one that WebKit
+and WebView2 treat as a **secure context** -- without opening a TCP port. Hand
+`NewWithOptions` a map of scheme name to handler; the handler turns a request
+into bytes:
+
+```go
+//go:embed ui
+var uiFS embed.FS
+
+w, err := glaze.NewWithOptions(glaze.Options{
+    Debug: true,
+    SchemeHandlers: map[string]glaze.SchemeHandler{
+        "app": func(req *glaze.SchemeRequest) *glaze.SchemeResponse {
+            data, ctype := serve(req.URL) // from your embedded FS, however you like
+            if data == nil {
+                return nil // a nil response is a 404
+            }
+            return &glaze.SchemeResponse{Body: data, MIMEType: ctype}
+        },
+    },
+})
+w.Navigate("app://home/index.html") // secure origin, no port
+```
+
+Why not just `file://` or `SetHtml`? Because neither is a **secure context**,
+and a large part of the web platform is gated behind one:
+
+| Approach | Port? | Secure context? |
+| --- | --- | --- |
+| Loopback `http://127.0.0.1:<port>` server | opens a port | yes |
+| `file://` / `SetHtml` | no port | **no** -- `crypto.subtle` is undefined, `getUserMedia`/geolocation are blocked, `localStorage` is unreliable, routing is hash-only |
+| **Custom scheme (this)** | **no port** | **yes** -- `localStorage`, `crypto.subtle`, `getUserMedia`, and path routing all work |
+
+Handlers are supplied at construction (not added later) because macOS bakes the
+scheme handlers into the `WKWebViewConfiguration` before the `WKWebView` exists.
+`New`/`NewWindow` delegate to `NewWithOptions`, so existing code is unaffected.
+
+Each backend uses its own native mechanism: macOS a `WKURLSchemeHandler`; Linux
+`webkit_web_context_register_uri_scheme` marked secure. **Windows** has no
+per-scheme secure flag, so the scheme is served over a per-scheme
+`https://<scheme>.localhost` virtual host (an https origin is a secure context)
+and `Navigate` rewrites `<scheme>://…` to it -- so your handler and your
+`Navigate` URLs use the one `scheme://` form on every platform. See
+[examples/scheme](examples/scheme/).
+
 ### Events
 
 A lightweight publish/subscribe bridge between Go and JavaScript, layered on
@@ -292,6 +340,7 @@ cd examples
 go run ./simple
 go run ./bind
 go run ./zero_tcp
+go run ./scheme
 ```
 
 Or from each example directory:
@@ -305,6 +354,11 @@ cd examples/filorepl && go run .
 `examples/zero_tcp` shows a local-first UI with no HTTP server and no loopback
 TCP gateway: it stages the frontend to disk, navigates to a `file://` URL, and
 talks to Go through `BindMethods` alone.
+
+`examples/scheme` is the secure-context counterpart: it serves an embedded
+frontend from a portless `app://` origin via a custom scheme handler, so
+`localStorage`, `crypto.subtle`, and path routing all work (they do not on the
+`file://` origin above).
 
 ## Testing
 
@@ -346,6 +400,7 @@ go build -ldflags="-H windowsgui" .
 - `webview_common.go` -- the `WebView` interface, function-wrapper, and JS marshalling
 - `webview_bridge.go` / `webview_bridge_webkit.go` -- the injected JS bridge (init/bind scripts)
 - `webview_darwin.go` / `webview_linux.go` / `webview_windows.go` (+ `webview2_windows.go`, `putbounds_amd64.go`, `putbounds_arm64.go`) -- the per-OS pure-Go backends
+- `scheme.go` (+ `webview2_scheme_windows.go`) -- the custom URL-scheme handler API (`NewWithOptions` / `SchemeHandler`)
 - `appwindow.go` -- desktop window + local HTTP server helper
 - `dialog.go` / `dialog_darwin.go` / `dialog_windows.go` / `dialog_linux.go` -- native file dialogs
 - `helpers.go` -- utility helpers (`BindMethods`, `RenderHTML`)

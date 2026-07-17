@@ -138,7 +138,7 @@ func (w *webview) serveSchemeWindows(args uintptr) {
 	if scheme == "" {
 		return
 	}
-	resp := w.serveScheme(scheme, uri)
+	resp := w.serveScheme(scheme, w.canonicalSchemeURL(scheme, uri))
 	if resp == nil || w.environment == 0 {
 		return
 	}
@@ -166,7 +166,47 @@ func (w *webview) rewriteSchemeURL(raw string) string {
 	if !ok {
 		return raw
 	}
+	// The vhost origin has no place for the scheme's authority, so remember it
+	// here; serveSchemeWindows uses it to rebuild the original URL for the
+	// handler (the other backends preserve the authority natively).
+	if u.Host != "" {
+		w.mu.Lock()
+		if w.schemeAuthority == nil {
+			w.schemeAuthority = map[string]string{}
+		}
+		w.schemeAuthority[u.Scheme] = u.Host
+		w.mu.Unlock()
+	}
 	out := schemeVHost(u.Scheme) + u.Path
+	if u.RawQuery != "" {
+		out += "?" + u.RawQuery
+	}
+	// Preserve the fragment: it is client-side (never sent to the handler), but
+	// dropping it here would break hash/path routing on the initial Navigate.
+	if u.Fragment != "" {
+		out += "#" + u.EscapedFragment()
+	}
+	return out
+}
+
+// canonicalSchemeURL turns the internal https vhost URL WebView2 delivers back
+// into the "<scheme>://<authority>/path?query" form the macOS/Linux backends
+// pass to a handler, so SchemeRequest.URL has one shape on every platform. The
+// authority is the one the app navigated with (recorded in rewriteSchemeURL),
+// falling back to the scheme name if none was seen. Fragments are client-side
+// and never reach a resource request, so none is reconstructed.
+func (w *webview) canonicalSchemeURL(scheme, vhostURL string) string {
+	u, err := url.Parse(vhostURL)
+	if err != nil {
+		return vhostURL
+	}
+	w.mu.Lock()
+	authority := w.schemeAuthority[scheme]
+	w.mu.Unlock()
+	if authority == "" {
+		authority = scheme
+	}
+	out := scheme + "://" + authority + u.Path
 	if u.RawQuery != "" {
 		out += "?" + u.RawQuery
 	}

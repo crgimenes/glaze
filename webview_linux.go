@@ -410,11 +410,15 @@ func (w *webview) serveScheme(scheme, url string) *SchemeResponse {
 
 // registerSchemes wires each SchemeHandler onto the web view's WebKitWebContext
 // and marks the scheme as a secure context. Called before the first Navigate.
-// Best-effort: a missing symbol/handle leaves the scheme unregistered rather
-// than failing construction.
-func (w *webview) registerSchemes() {
-	if len(w.schemeHandlers) == 0 || w.webview == 0 {
-		return
+// It returns an error when a requested scheme cannot be registered (a missing
+// library, handle, or symbol), rather than silently leaving the scheme
+// unregistered so app:// pages fail to load with no diagnostic anywhere.
+func (w *webview) registerSchemes() error {
+	if len(w.schemeHandlers) == 0 {
+		return nil
+	}
+	if w.webview == 0 {
+		return errors.New("webview: register schemes: web view not created")
 	}
 	webkitSonames := []string{"libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37"}
 	if gtk4 {
@@ -422,19 +426,26 @@ func (w *webview) registerSchemes() {
 	}
 	webkit, err := openFirst(webkitSonames...)
 	if err != nil {
-		return
+		return fmt.Errorf("webview: register schemes: load webkit: %w", err)
 	}
 	gio, err := openFirst("libgio-2.0.so.0")
 	if err != nil {
-		return
+		return fmt.Errorf("webview: register schemes: load gio: %w", err)
 	}
 	gobject, err := openFirst("libgobject-2.0.so.0")
 	if err != nil {
-		return
+		return fmt.Errorf("webview: register schemes: load gobject: %w", err)
 	}
 	gFreeAddr, err := purego.Dlsym(glibLib, "g_free")
 	if err != nil {
-		return
+		return fmt.Errorf("webview: register schemes: resolve g_free: %w", err)
+	}
+	// g_memdup2 (gsize length) only exists on GLib >= 2.68; on older GLib
+	// (Debian 11, Ubuntu 20.04) fall back to g_memdup (guint length). Resolve
+	// with Dlsym, not RegisterLibFunc, which panics when a symbol is absent.
+	memdup, err := resolveMemdup(glibLib)
+	if err != nil {
+		return fmt.Errorf("webview: register schemes: %w", err)
 	}
 
 	var (
@@ -446,7 +457,6 @@ func (w *webview) registerSchemes() {
 		requestGetScheme    func(uintptr) uintptr
 		schemeRequestFinish func(req, stream uintptr, streamLen int64, contentType string)
 		memInputStreamNew   func(data unsafe.Pointer, length int, destroy uintptr) uintptr
-		gMemdup2            func(mem unsafe.Pointer, size int) unsafe.Pointer
 		gObjectUnref        func(uintptr)
 	)
 	purego.RegisterLibFunc(&getContext, webkit, "webkit_web_view_get_context")
@@ -457,14 +467,16 @@ func (w *webview) registerSchemes() {
 	purego.RegisterLibFunc(&requestGetScheme, webkit, "webkit_uri_scheme_request_get_scheme")
 	purego.RegisterLibFunc(&schemeRequestFinish, webkit, "webkit_uri_scheme_request_finish")
 	purego.RegisterLibFunc(&memInputStreamNew, gio, "g_memory_input_stream_new_from_data")
-	purego.RegisterLibFunc(&gMemdup2, glibLib, "g_memdup2")
 	purego.RegisterLibFunc(&gObjectUnref, gobject, "g_object_unref")
 
 	ctx := getContext(w.webview)
 	if ctx == 0 {
-		return
+		return errors.New("webview: register schemes: web context is nil")
 	}
 	sm := getSecurityManager(ctx)
+	if sm == 0 {
+		return errors.New("webview: register schemes: security manager is nil")
+	}
 
 	// void (*WebKitURISchemeRequestCallback)(WebKitURISchemeRequest*, gpointer).
 	// user_data is the engine id, so this resolves back to the right webview.
@@ -485,7 +497,7 @@ func (w *webview) registerSchemes() {
 		// the bytes outlive this callback (the stream is read asynchronously).
 		var dataPtr unsafe.Pointer
 		if len(body) > 0 {
-			dataPtr = gMemdup2(unsafe.Pointer(&body[0]), len(body)) // #nosec G103 -- copied into glib memory, freed by g_free
+			dataPtr = memdup(unsafe.Pointer(&body[0]), len(body)) // #nosec G103 -- copied into glib memory, freed by g_free
 		}
 		stream := memInputStreamNew(dataPtr, len(body), uintptr(gFreeAddr))
 		schemeRequestFinish(request, stream, int64(len(body)), mime)
@@ -494,10 +506,29 @@ func (w *webview) registerSchemes() {
 	})
 	for scheme := range w.schemeHandlers {
 		registerScheme(ctx, scheme, w.schemeCB, w.id, 0)
-		if sm != 0 {
-			registerAsSecure(sm, scheme)
-		}
+		registerAsSecure(sm, scheme)
 	}
+	return nil
+}
+
+// resolveMemdup returns a "copy into glib-owned memory" function, preferring
+// g_memdup2 (GLib >= 2.68, gsize length) and falling back to g_memdup (older
+// GLib, guint length) so custom schemes still work on Debian 11 / Ubuntu 20.04.
+// The copy is freed with g_free once the input stream has been read. Dlsym is
+// used instead of RegisterLibFunc because the latter panics on a missing symbol
+// and g_memdup2 legitimately is absent on older systems.
+func resolveMemdup(glib uintptr) (func(mem unsafe.Pointer, size int) unsafe.Pointer, error) {
+	if addr, err := purego.Dlsym(glib, "g_memdup2"); err == nil && addr != 0 {
+		var f func(mem unsafe.Pointer, size uint64) unsafe.Pointer
+		purego.RegisterFunc(&f, addr)
+		return func(mem unsafe.Pointer, size int) unsafe.Pointer { return f(mem, uint64(size)) }, nil
+	}
+	if addr, err := purego.Dlsym(glib, "g_memdup"); err == nil && addr != 0 {
+		var f func(mem unsafe.Pointer, size uint32) unsafe.Pointer
+		purego.RegisterFunc(&f, addr)
+		return func(mem unsafe.Pointer, size int) unsafe.Pointer { return f(mem, uint32(size)) }, nil
+	}
+	return nil, errors.New("neither g_memdup2 nor g_memdup is available")
 }
 
 // New creates a new window and a web view.
@@ -531,7 +562,10 @@ func NewWithOptions(opts Options) (WebView, error) {
 		unregisterEngine(w.id)
 		return nil, err
 	}
-	w.registerSchemes()
+	if err := w.registerSchemes(); err != nil {
+		w.Destroy()
+		return nil, err
+	}
 	w.windowSettings(opts.Debug)
 	if w.ownsWindow {
 		// Apply a default size (which also shows the window) unless the caller
