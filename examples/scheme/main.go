@@ -52,7 +52,8 @@ func serveAsset(req *glaze.SchemeRequest) *glaze.SchemeResponse {
 // a clean embedded-FS name, defaulting the root to index.html.
 func assetName(reqURL string) string {
 	p := reqURL
-	if u, err := url.Parse(reqURL); err == nil && u.Path != "" {
+	u, err := url.Parse(reqURL)
+	if err == nil && u.Path != "" {
 		p = u.Path
 	}
 	p = strings.TrimPrefix(path.Clean("/"+p), "/")

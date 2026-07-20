@@ -532,12 +532,14 @@ func (w *webview) registerSchemes() error {
 // used instead of RegisterLibFunc because the latter panics on a missing symbol
 // and g_memdup2 legitimately is absent on older systems.
 func resolveMemdup(glib uintptr) (func(mem unsafe.Pointer, size int) unsafe.Pointer, error) {
-	if addr, err := purego.Dlsym(glib, "g_memdup2"); err == nil && addr != 0 {
+	addr, err := purego.Dlsym(glib, "g_memdup2")
+	if err == nil && addr != 0 {
 		var f func(mem unsafe.Pointer, size uint64) unsafe.Pointer
 		purego.RegisterFunc(&f, addr)
 		return func(mem unsafe.Pointer, size int) unsafe.Pointer { return f(mem, uint64(size)) }, nil
 	}
-	if addr, err := purego.Dlsym(glib, "g_memdup"); err == nil && addr != 0 {
+	addr, err = purego.Dlsym(glib, "g_memdup")
+	if err == nil && addr != 0 {
 		var f func(mem unsafe.Pointer, size uint32) unsafe.Pointer
 		purego.RegisterFunc(&f, addr)
 		return func(mem unsafe.Pointer, size int) unsafe.Pointer { return f(mem, uint32(size)) }, nil
@@ -576,7 +578,8 @@ func NewWithOptions(opts Options) (WebView, error) {
 		unregisterEngine(w.id)
 		return nil, err
 	}
-	if err := w.registerSchemes(); err != nil {
+	err = w.registerSchemes()
+	if err != nil {
 		w.Destroy()
 		return nil, err
 	}

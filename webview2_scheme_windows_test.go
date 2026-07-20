@@ -64,7 +64,8 @@ func TestCanonicalSchemeURL(t *testing.T) {
 func TestCanonicalSchemeURLFallback(t *testing.T) {
 	w := &webview{schemeHandlers: map[string]SchemeHandler{"app": nil}}
 	got := w.canonicalSchemeURL("app", "https://app.localhost/index.html")
-	if want := "app://app/index.html"; got != want {
+	want := "app://app/index.html"
+	if got != want {
 		t.Errorf("canonicalSchemeURL fallback = %q, want %q", got, want)
 	}
 }
@@ -80,7 +81,8 @@ func TestSchemeURLRoundTrip(t *testing.T) {
 	w.rewriteSchemeURL("app://home/index.html")
 	// A sub-resource request arrives on the vhost origin and is reconstructed.
 	got := w.canonicalSchemeURL("app", "https://app.localhost/assets/app.js")
-	if want := "app://home/assets/app.js"; got != want {
+	want := "app://home/assets/app.js"
+	if got != want {
 		t.Errorf("round-trip = %q, want %q", got, want)
 	}
 }
