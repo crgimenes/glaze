@@ -449,15 +449,19 @@ func (w *webview) registerSchemes() error {
 	}
 
 	var (
-		getContext          func(uintptr) uintptr
-		registerScheme      func(ctx uintptr, scheme string, cb, data, notify uintptr)
-		getSecurityManager  func(uintptr) uintptr
-		registerAsSecure    func(sm uintptr, scheme string)
-		requestGetURI       func(uintptr) uintptr
-		requestGetScheme    func(uintptr) uintptr
-		schemeRequestFinish func(req, stream uintptr, streamLen int64, contentType string)
-		memInputStreamNew   func(data unsafe.Pointer, length int, destroy uintptr) uintptr
-		gObjectUnref        func(uintptr)
+		getContext               func(uintptr) uintptr
+		registerScheme           func(ctx uintptr, scheme string, cb, data, notify uintptr)
+		getSecurityManager       func(uintptr) uintptr
+		registerAsSecure         func(sm uintptr, scheme string)
+		requestGetURI            func(uintptr) uintptr
+		requestGetScheme         func(uintptr) uintptr
+		schemeRequestFinish      func(req, stream uintptr, streamLen int64, contentType string)
+		schemeRequestFinishError func(req, err uintptr)
+		memInputStreamNew        func(data unsafe.Pointer, length int, destroy uintptr) uintptr
+		gObjectUnref             func(uintptr)
+		newErrorLiteral          func(domain uint32, code int32, message string) uintptr
+		freeError                func(err uintptr)
+		ioErrorQuark             func() uint32
 	)
 	purego.RegisterLibFunc(&getContext, webkit, "webkit_web_view_get_context")
 	purego.RegisterLibFunc(&registerScheme, webkit, "webkit_web_context_register_uri_scheme")
@@ -466,8 +470,12 @@ func (w *webview) registerSchemes() error {
 	purego.RegisterLibFunc(&requestGetURI, webkit, "webkit_uri_scheme_request_get_uri")
 	purego.RegisterLibFunc(&requestGetScheme, webkit, "webkit_uri_scheme_request_get_scheme")
 	purego.RegisterLibFunc(&schemeRequestFinish, webkit, "webkit_uri_scheme_request_finish")
+	purego.RegisterLibFunc(&schemeRequestFinishError, webkit, "webkit_uri_scheme_request_finish_error")
 	purego.RegisterLibFunc(&memInputStreamNew, gio, "g_memory_input_stream_new_from_data")
 	purego.RegisterLibFunc(&gObjectUnref, gobject, "g_object_unref")
+	purego.RegisterLibFunc(&newErrorLiteral, glibLib, "g_error_new_literal")
+	purego.RegisterLibFunc(&freeError, glibLib, "g_error_free")
+	purego.RegisterLibFunc(&ioErrorQuark, gio, "g_io_error_quark")
 
 	ctx := getContext(w.webview)
 	if ctx == 0 {
@@ -488,11 +496,17 @@ func (w *webview) registerSchemes() error {
 		url := cstr(requestGetURI(request))
 		scheme := cstr(requestGetScheme(request))
 		resp := eng.serveScheme(scheme, url)
-		var body []byte
-		mime := "application/octet-stream"
-		if resp != nil {
-			body, mime = resp.Body, schemeMIME(resp)
+		if resp == nil {
+			// A nil response means "not found": finish with an error so the load
+			// fails, matching macOS (didFailWithError:) and Windows (default 404)
+			// instead of delivering a successful empty document.
+			const gIOErrorNotFound = 1 // G_IO_ERROR_NOT_FOUND
+			gerr := newErrorLiteral(ioErrorQuark(), gIOErrorNotFound, "resource not found")
+			schemeRequestFinishError(request, gerr)
+			freeError(gerr) // finish_error copies it; we own our reference
+			return 0
 		}
+		body, mime := resp.Body, schemeMIME(resp)
 		// Copy into glib-owned memory freed by g_free once the stream is done, so
 		// the bytes outlive this callback (the stream is read asynchronously).
 		var dataPtr unsafe.Pointer
