@@ -160,6 +160,12 @@ func buildItem(it Item) objc.ID {
 		item.Send(sel("setEnabled:"), false)
 		return item
 	}
+	if it.Selector != "" {
+		// Native action down the responder chain: action set, target left nil, so
+		// AppKit delivers it to the focused responder (an NSTextView, a WKWebView).
+		item.Send(sel("setAction:"), sel(it.Selector))
+		return item
+	}
 	if it.OnClick != nil {
 		cbMu.Lock()
 		cbSeq++

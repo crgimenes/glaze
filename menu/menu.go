@@ -45,6 +45,16 @@ type Item struct {
 	// Options.Dispatch). Ignored for separators and items that have a Submenu.
 	OnClick func()
 
+	// Selector, macOS only, wires the item to a native Objective-C action sent
+	// down the responder chain (nil target) instead of a Go callback: "undo:",
+	// "redo:", "cut:", "copy:", "paste:", "selectAll:" build a standard Edit
+	// menu whose shortcuts reach the focused view, a WKWebView included; without
+	// them Cmd+C/V/X have no route to the web view's editing commands. An item
+	// with a Selector ignores OnClick. On Windows and Linux the item is skipped:
+	// there the focused control handles editing shortcuts itself, so the menu
+	// has nothing to wire.
+	Selector string
+
 	// Submenu, when non-empty, makes this item open a sub-menu.
 	Submenu []Item
 
