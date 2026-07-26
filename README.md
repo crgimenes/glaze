@@ -421,8 +421,9 @@ Glaze loads the OS WebView framework directly and bundles or extracts no native 
 ## More of my projects
 
 - [filo](https://github.com/crgimenes/filo): a small scripting language safe to embed in Go programs.
+- [keikiban](https://github.com/crgimenes/keikiban): a PostgreSQL dashboard; database load, top SQL, locks, index health.
 - [kutta](https://github.com/crgimenes/kutta): a 2D wind tunnel; watch air misbehave around an airfoil.
-- [neko](https://github.com/crgimenes/neko): the classic desktop cat chasing your pointer, in Go.
 - [minigui](https://github.com/crgimenes/minigui): a tiny immediate-mode GUI for Ebitengine.
+- [neko](https://github.com/crgimenes/neko): the classic desktop cat chasing your pointer, in Go.
 
 More at [github.com/crgimenes](https://github.com/crgimenes) and [crg.eti.br](https://crg.eti.br).
