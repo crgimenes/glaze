@@ -150,41 +150,20 @@ window.addEventListener('load', function () {
     }
     fe.closeComp();
 
-    // The caret and the selection are DRAWN, and they must land on the text's
-    // own row — the textarea's native ones sit a half-leading above it, which
-    // is what crg saw as a caret off its line and a selection that did not
-    // match the line height.
-    fe.setValue('aaaa\nbbbb\ncccc\ndddd');
-    fe.ta.focus();
-    var caretAt = fe.ta.value.indexOf('cccc') + 2;   // line 3, column 2
-    fe.ta.setSelectionRange(caretAt, caretAt);
-    fe.paintCaret();
-    if (fe.caret.hidden) { window.done('the caret is not drawn while focused'); return; }
-    var wantTop = fe.padT + 2 * realRow, wantLeft = fe.padL + 2 * fe.charW;
-    var gotTop = parseFloat(fe.caret.style.top), gotLeft = parseFloat(fe.caret.style.left);
-    if (Math.abs(gotTop - wantTop) > 0.5 || Math.abs(gotLeft - wantLeft) > 0.5) {
-      window.done('caret at ' + gotLeft + ',' + gotTop + ' want ' + wantLeft + ',' + wantTop); return;
+    // The caret and the selection are the browser's NATIVE ones: the drawn
+    // overlay was retired after its arithmetic drifted on long documents and
+    // mouse drags (crg's verdict: chasing our own tail). The alignment
+    // invariant that replaces it: the textarea and the highlight share the
+    // same font and the same line-height — same metrics, same rows, forever,
+    // with line-height NORMAL so the engine cannot overrule the number.
+    var csTa = getComputedStyle(fe.ta), csPre = getComputedStyle(fe.pre);
+    if (csTa.lineHeight !== csPre.lineHeight || csTa.fontSize !== csPre.fontSize) {
+      window.done('the layers disagree: ta ' + csTa.fontSize + '/' + csTa.lineHeight +
+        ' vs pre ' + csPre.fontSize + '/' + csPre.lineHeight); return;
     }
-    if (Math.abs(parseFloat(fe.caret.style.height) - realRow) > 0.5) {
-      window.done('the caret is ' + fe.caret.style.height + ' tall on a ' + realRow + 'px row'); return;
+    if (csTa.lineHeight !== 'normal') {
+      window.done('line-height is ' + csTa.lineHeight + ', not normal — the engine may overrule it'); return;
     }
-
-    // A selection spanning three lines draws one band per line, each a full
-    // row tall and starting on the row's own top.
-    fe.ta.setSelectionRange(fe.ta.value.indexOf('bbbb'), fe.ta.value.indexOf('dddd') + 2);
-    fe.paintCaret();
-    var bands = fe.sel.children;
-    if (bands.length !== 3) { window.done('three selected lines drew ' + bands.length + ' bands'); return; }
-    if (!fe.caret.hidden) { window.done('the caret is drawn over a range selection'); return; }
-    if (Math.abs(parseFloat(bands[0].style.top) - (fe.padT + realRow)) > 0.5) {
-      window.done('the first band is at ' + bands[0].style.top + ', off its row'); return;
-    }
-    if (Math.abs(parseFloat(bands[0].style.height) - realRow) > 0.5) {
-      window.done('a band is ' + bands[0].style.height + ' on a ' + realRow + 'px row'); return;
-    }
-    fe.ta.setSelectionRange(0, 0);
-    fe.paintCaret();
-    if (fe.sel.children.length !== 0) { window.done('bands survived the selection being cleared'); return; }
 
     var se = new GlazeEditor(document.getElementById('se'), {language: 'sql'});
     se.setValue("SELECT count(*) FROM t -- all\n/* block\nstill */ WHERE x = 'v' AND y > 42");
@@ -195,49 +174,23 @@ window.addEventListener('load', function () {
     // tokenizer state exists for.
     if (sh.split('ge-t-c').length < 4) { window.done('sql block comment did not span lines'); return; }
 
-    // A held arrow key REPEATS keydown but fires keyup once, at release —
-    // a caret drawn from keyup freezes for the whole hold and materializes
-    // at the destination, which is what crg saw. The caret must follow
-    // selectionchange instead, so: move the selection WITHOUT calling any
-    // editor method and let the event alone drive the repaint. This is the
-    // one place that proves the WebView actually delivers the event.
-    fe.setValue('aaaa\nbbbb\ncccc\ndddd');
-    fe.ta.focus();
-    fe.ta.setSelectionRange(0, 0);
-    fe.paintCaret();
-    var target = fe.ta.value.indexOf('cccc');
-    fe.ta.setSelectionRange(target, target);
-    var wantY = fe.padT + 2 * realRow, tries = 0;
-    (function waitCaret() {
-      if (Math.abs(parseFloat(fe.caret.style.top) - wantY) <= 0.5) {
-        realKey(); return;
-      }
-      if (++tries > 40) {
-        window.done('selectionchange never moved the caret: at ' +
-          fe.caret.style.top + ', want ' + wantY); return;
-      }
-      setTimeout(waitCaret, 25);
-    })();
-
     // Finally, a REAL keystroke: an actual ArrowDown NSEvent sent through
     // the window's responder chain, with no click ever delivered. This is
     // the user's own test — open the window, press the arrow — and it
     // fails unless the whole chain holds: the webView is first responder,
     // the page is active, and the textarea has the DOM focus.
-    function realKey() {
-      fe.ta.focus();
-      fe.ta.setSelectionRange(0, 0);
-      window.pressDown();
-      var kt = 0;
-      (function waitKey() {
-        if (fe.ta.selectionStart === 5) { window.done('editor-ok'); return; }
-        if (++kt > 40) {
-          window.done('a real ArrowDown moved the caret to ' +
-            fe.ta.selectionStart + ', want 5 (line 2)'); return;
-        }
-        setTimeout(waitKey, 25);
-      })();
-    }
+    fe.setValue('aaaa\nbbbb\ncccc\ndddd');
+    fe.ta.focus();
+    window.pressDown();
+    var kt = 0;
+    (function waitKey() {
+      if (fe.ta.selectionStart === 5) { window.done('editor-ok'); return; }
+      if (++kt > 40) {
+        window.done('a real ArrowDown moved the caret to ' +
+          fe.ta.selectionStart + ', want 5 (line 2)'); return;
+      }
+      setTimeout(waitKey, 25);
+    })();
   } catch (e) { window.done('ERR:' + e); }
   }
 });

@@ -24,7 +24,17 @@
 
 	--ge-font: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
 	--ge-font-size: 13px;
-	--ge-line-height: 1.45;
+	/* NORMAL, and this is the load-bearing line of the whole editor. The
+	 * caret and the selection are the browser's own, and the browser aligns
+	 * them with the font's OWN metrics — which is why a plain textarea never
+	 * shows a floating caret. Every specified line-height broke that pact
+	 * somewhere: 1.45 floated the caret a half-leading above its line, and
+	 * 1.25 was silently overruled by the font's natural height (16.25px asked,
+	 * 17px rows delivered), which is the drift crg saw grow down a long
+	 * document. The font's number is the only one every layer — textarea,
+	 * highlight, gutter, caret, selection — agrees on, on every platform.
+	 * Do not set a value here. Reread the history first. */
+	--ge-line-height: normal;
 
 	display: flex;
 	overflow: hidden;
@@ -88,50 +98,16 @@
 	resize: none;
 	outline: none;
 	background: transparent;
+	/* The glyphs are painted by the pre underneath; the textarea contributes
+	 * the NATIVE caret and selection, which the browser draws on the real
+	 * text geometry — the one thing arithmetic overlays never got right. */
 	color: transparent;
-	/* The caret and the selection are drawn by .ge-caret and .ge-sel, on the
-	 * text's own geometry. A textarea paints its own over the font's content
-	 * box aligned to the TOP of the line box, while glyphs sit centred in it —
-	 * so at any comfortable line-height both land a half-leading above the
-	 * text they belong to. Hiding them is what lets the drawn ones be exact. */
-	caret-color: transparent;
+	caret-color: var(--ge-caret);
 }
 
 .ge-ta::selection {
-	background: transparent;
-}
-
-/* Selection rectangles, one per selected line, behind the text. */
-.ge-sel {
-	position: absolute;
-	inset: 0;
-	pointer-events: none;
-	overflow: hidden;
-}
-
-.ge-sel > i {
-	position: absolute;
 	background: var(--ge-sel);
-}
-
-.ge-caret {
-	position: absolute;
-	width: 2px;
-	background: var(--ge-caret);
-	pointer-events: none;
-	animation: ge-blink 1.06s step-end infinite;
-}
-
-.ge-caret[hidden] {
-	display: none;
-}
-
-@keyframes ge-blink {
-	50% { opacity: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.ge-caret { animation: none; }
+	color: transparent;
 }
 
 .ge-t-k { color: var(--ge-t-k); }

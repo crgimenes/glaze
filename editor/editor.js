@@ -36,32 +36,28 @@ class GlazeEditor {
 		this.matchKey = "";
 
 		host.classList.add("ge");
-		// The caret and the selection are DRAWN HERE, not by the textarea.
-		// A textarea paints both over the font's content box aligned to the top
-		// of the line box, while the glyphs sit centred in that box — so with any
-		// comfortable line-height they are offset from the text by the
-		// half-leading, which is exactly what a user sees as "the caret is not on
-		// the line" and "the selection does not match the line height". The
-		// textarea keeps everything that matters (editing, undo, IME, native
-		// keys) with its own caret and selection made invisible; these two
-		// layers put them back where the text actually is, which monospace
-		// geometry makes exact.
+		// The caret and the selection are the textarea's own, NATIVE ones.
+		// A first version drew both over the text with (line, column)
+		// arithmetic, because a textarea paints them on the font's content box
+		// aligned to the top of the line box while glyphs sit centred in it —
+		// a half-leading offset. But everything drawn by arithmetic drifted
+		// somewhere the arithmetic did not reach (long documents, mouse drags),
+		// and crg was right to call it chasing our own tail. The browser
+		// draws its caret on the real glyph geometry on every platform; the
+		// job here is only to make the half-leading invisible, which the
+		// line-height in editor.css does.
 		host.innerHTML =
 			'<div class="ge-gutter"><div class="ge-nums">1</div></div>' +
 			'<div class="ge-body">' +
-			'<div class="ge-sel" aria-hidden="true"></div>' +
 			'<pre class="ge-hl" aria-hidden="true"><code></code></pre>' +
 			'<textarea class="ge-ta" spellcheck="false" autocapitalize="off" ' +
 			'autocomplete="off" autocorrect="off" wrap="off"></textarea>' +
-			'<div class="ge-caret" aria-hidden="true" hidden></div>' +
 			'<div class="ge-comp" hidden></div>' +
 			"</div>";
 		this.nums = host.querySelector(".ge-nums");
 		this.pre = host.querySelector(".ge-hl");
 		this.code = this.pre.querySelector("code");
 		this.ta = host.querySelector(".ge-ta");
-		this.sel = host.querySelector(".ge-sel");
-		this.caret = host.querySelector(".ge-caret");
 		this.comp = host.querySelector(".ge-comp");
 		this.compList = [];
 		this.compIdx = 0;
@@ -80,32 +76,22 @@ class GlazeEditor {
 		this.ta.addEventListener("scroll", () => this.syncScroll());
 		this.ta.addEventListener("keydown", e => this.onKey(e));
 		this.ta.addEventListener("click", () => this.closeComp());
-		// The caret follows selectionchange, which fires on EVERY move from any
-		// source: key auto-repeat, mouse drag, cmd-arrows, programmatic. The
-		// first version drew it from keyup — but a held arrow repeats keydown
-		// and fires keyup once, at release, so the caret froze for the whole
-		// hold and materialized at the destination. One listener replaces the
-		// keyup/select/mousemove approximations, coalesced to a frame.
+		// Bracket matching follows selectionchange, which fires on EVERY caret
+		// move from any source: key auto-repeat, mouse drag, cmd-arrows,
+		// programmatic. (keyup does not: a held arrow repeats keydown and
+		// fires keyup once, at release.) Coalesced to a frame.
 		this.caretRaf = 0;
 		this.onSelChange = () => {
 			if (document.activeElement === this.ta) this.scheduleCaret();
 		};
 		document.addEventListener("selectionchange", this.onSelChange);
-		// hasFocus() flips when the WINDOW gains or loses the keyboard, which
-		// moves no selection and focuses no element — only these two hear it.
-		this.onWinFocus = () => this.paintCaret();
-		window.addEventListener("focus", this.onWinFocus);
-		window.addEventListener("blur", this.onWinFocus);
-		this.ta.addEventListener("focus", () => this.paintCaret());
 		// A click on a completion item must win over the blur it causes.
 		this.ta.addEventListener("blur", () => {
-			this.paintCaret();
 			setTimeout(() => this.closeComp(), 150);
 		});
 
 		this.measure();
 		this.render();
-		this.paintCaret();
 	}
 
 	// ---- geometry -----------------------------------------------------------
@@ -115,27 +101,30 @@ class GlazeEditor {
 	// element, which only works because code fonts are monospace — that is the
 	// deal a code editor gets to make.
 	//
-	// The ROW height must come from the computed line-height, not from the
-	// probe's rect: an inline element reports its font's content box, which at
-	// line-height 1.45 is several pixels short of the row it actually sits in.
-	// Measured 15px against a real 18.84px row, and every consumer inherited the
-	// error — the completion list drew a quarter of a line too high per line
-	// down the file, and scrollCaretIntoView scrolled to an offset that left the
-	// caret sitting between rows.
+	// The ROW height is MEASURED — two extra lines add exactly two rows — not
+	// read from computed style. Both shortcuts lied in turn: an inline probe's
+	// rect is the font's content box (15px against a real 18.84px row), and
+	// the computed line-height is only a request the engine may overrule (asked
+	// 16.25px, got 17px rows, the font's natural height). The renderer is the
+	// only honest source for what a row is.
 	measure() {
-		const probe = document.createElement("span");
-		probe.textContent = "XXXXXXXXXX";
-		probe.style.visibility = "hidden";
-		this.code.appendChild(probe);
-		this.charW = probe.getBoundingClientRect().width / 10 || 8;
-		probe.remove();
+		const one = document.createElement("span");
+		const three = document.createElement("span");
+		one.textContent = "X";
+		three.textContent = "X\nX\nX";
+		one.style.visibility = "hidden";
+		three.style.visibility = "hidden";
+		this.code.append(one, three);
+		this.charW = one.getBoundingClientRect().width || 8;
+		this.lineH = (three.getBoundingClientRect().height - one.getBoundingClientRect().height) / 2;
+		one.remove();
+		three.remove();
 
 		const cs = getComputedStyle(this.ta);
-		this.lineH = parseFloat(cs.lineHeight);
-		if (!Number.isFinite(this.lineH)) {
-			// "normal": no px value to read, so fall back to the ratio browsers
-			// use for it rather than to a magic constant.
-			this.lineH = (parseFloat(cs.fontSize) || 13) * 1.2;
+		if (!(this.lineH > 0)) {
+			// A hidden host measures zero; the font-size ratio is the least
+			// wrong stand-in until someone calls measure() on a visible one.
+			this.lineH = (parseFloat(cs.fontSize) || 13) * 1.3;
 		}
 		this.padL = parseFloat(cs.paddingLeft) || 0;
 		this.padT = parseFloat(cs.paddingTop) || 0;
@@ -145,70 +134,6 @@ class GlazeEditor {
 		this.pre.scrollTop = this.ta.scrollTop;
 		this.pre.scrollLeft = this.ta.scrollLeft;
 		this.nums.style.transform = "translateY(" + -this.ta.scrollTop + "px)";
-		this.paintCaret();
-	}
-
-	// lineColOf turns an absolute offset into a (line, column) pair.
-	lineColOf(pos) {
-		const before = this.ta.value.slice(0, pos);
-		const nl = before.lastIndexOf("\n");
-		return { line: (before.match(/\n/g) || []).length, col: before.length - nl - 1 };
-	}
-
-	// xOf / yOf place a (line, column) in the body's own coordinates, scroll
-	// included. Monospace is what makes this arithmetic instead of a mirror.
-	xOf(col) {
-		return this.padL + col * this.charW - this.ta.scrollLeft;
-	}
-
-	yOf(line) {
-		return this.padT + line * this.lineH - this.ta.scrollTop;
-	}
-
-	// paintCaret draws the caret and the selection where the TEXT is. Called
-	// from every path that can move either.
-	paintCaret() {
-		const a = Math.min(this.ta.selectionStart, this.ta.selectionEnd);
-		const b = Math.max(this.ta.selectionStart, this.ta.selectionEnd);
-		// activeElement alone LIES: JS focus() marks the textarea inside the
-		// page even when the native view never got the keyboard, and a caret
-		// that blinks then is a promise the next keystroke will break (crg
-		// typed into one and got the system beep). hasFocus() is the document's
-		// word on whether keys actually arrive here.
-		const focused = document.activeElement === this.ta && document.hasFocus();
-
-		const at = this.lineColOf(this.ta.selectionEnd);
-		this.caret.hidden = !focused || a !== b;
-		this.caret.style.left = this.xOf(at.col) + "px";
-		this.caret.style.top = this.yOf(at.line) + "px";
-		this.caret.style.height = this.lineH + "px";
-		// Restart the blink on every move, the way a real caret does.
-		this.caret.style.animation = "none";
-		void this.caret.offsetWidth;
-		this.caret.style.animation = "";
-
-		if (a === b) {
-			this.sel.textContent = "";
-			return;
-		}
-		const from = this.lineColOf(a);
-		const to = this.lineColOf(b);
-		const lines = this.ta.value.split("\n");
-		let html = "";
-		for (let li = from.line; li <= to.line; li++) {
-			const startCol = li === from.line ? from.col : 0;
-			// A selection that runs past a line's end shows the newline as a
-			// sliver of a character, which is how editors say "this break is
-			// selected too".
-			const endCol = li === to.line ? to.col : lines[li].length + 1;
-			if (endCol <= startCol) {
-				continue;
-			}
-			html +=
-				'<i style="left:' + this.xOf(startCol) + "px;top:" + this.yOf(li) +
-				"px;width:" + (endCol - startCol) * this.charW + "px;height:" + this.lineH + 'px"></i>';
-		}
-		this.sel.innerHTML = html;
 	}
 
 	scrollCaretIntoView() {
@@ -303,7 +228,7 @@ class GlazeEditor {
 	// ---- bracket matching ---------------------------------------------------
 
 	// scheduleCaret coalesces however many selectionchange events a frame
-	// brings (a fast drag delivers several) into one repaint.
+	// brings (a fast drag delivers several) into one match pass.
 	scheduleCaret() {
 		if (this.caretRaf) return;
 		this.caretRaf = requestAnimationFrame(() => {
@@ -313,7 +238,6 @@ class GlazeEditor {
 	}
 
 	caretMoved() {
-		this.paintCaret();
 		const pair = this.findPair(this.ta.value, this.ta.selectionStart);
 		const key = pair ? pair.join(",") : "";
 		if (key === this.matchKey) return;
@@ -575,7 +499,6 @@ class GlazeEditor {
 		this.errors.clear();
 		this.closeComp();
 		this.render();
-		this.paintCaret();
 	}
 
 	setCompletions(list) {
@@ -599,8 +522,6 @@ class GlazeEditor {
 
 	destroy() {
 		document.removeEventListener("selectionchange", this.onSelChange);
-		window.removeEventListener("focus", this.onWinFocus);
-		window.removeEventListener("blur", this.onWinFocus);
 		cancelAnimationFrame(this.caretRaf);
 		this.host.innerHTML = "";
 		this.host.classList.remove("ge");
