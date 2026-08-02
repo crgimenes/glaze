@@ -76,6 +76,16 @@ type Options struct {
 	// so they can safely touch UI state. If nil, callbacks run on the thread that
 	// delivers the event (the main thread on macOS, so nil is fine there) and Set
 	// itself must be called on the UI thread.
+	//
+	// LEAVE IT NIL when building the menu before the run loop starts — which is
+	// the usual place, right before WebView.Run. Set marshals its AppKit work
+	// through the dispatcher and BLOCKS until that work has run; a dispatcher
+	// that queues onto the main queue (WebView.Dispatch does) has nothing
+	// draining it until the run loop is going, so the call never returns. The
+	// symptom is a process hanging with no window and no error, which is worth
+	// naming here because passing the WebView's own Dispatch is the
+	// obvious-looking thing to do. Pass a dispatcher only when calling Set from
+	// another goroutine while the UI is already running.
 	Dispatch func(func())
 }
 
