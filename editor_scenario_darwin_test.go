@@ -40,6 +40,21 @@ func editorScenario() string {
 <script>` + string(js) + `</script>
 <script>
 window.addEventListener('load', function () {
+  // A fresh window must ALREADY own the keyboard. The window's content view
+  // is a plain NSView, which refuses first-responder status — before glaze
+  // handed the role to the webView at creation, the first responder stopped
+  // at the window, hasFocus() stayed false, and the first keystroke into a
+  // blinking caret was the system beep (crg heard it). Activation is
+  // asynchronous, so poll briefly; but no click, ever.
+  var focusTries = 0;
+  (function waitFocus() {
+    if (!document.hasFocus()) {
+      if (++focusTries > 80) { window.done('the window never got the keyboard: hasFocus stays false'); return; }
+      setTimeout(waitFocus, 25); return;
+    }
+    run();
+  })();
+  function run() {
   try {
     var fe = new GlazeEditor(document.getElementById('fe'),
       {language: 'filo', completions: ['seek', 'self-x', 'self-hull']});
@@ -175,6 +190,7 @@ window.addEventListener('load', function () {
       setTimeout(waitCaret, 25);
     })();
   } catch (e) { window.done('ERR:' + e); }
+  }
 });
 </script></body></html>`
 	w.SetHtml(page)

@@ -591,6 +591,13 @@ func (w *webview) windowSettings(debug bool) {
 		w.window.Send(sel("setContentView:"), w.widget)
 		if w.ownsWindow {
 			w.window.Send(sel("makeKeyAndOrderFront:"), objc.ID(0))
+			// The content view is a plain NSView container, and a plain NSView
+			// REFUSES first-responder status — so when the window becomes key,
+			// AppKit's offer stops at the window itself and every keystroke is
+			// an unhandled key: the system beep. A click fixed it only because
+			// hit-testing hands the WKWebView the responder role. Hand it over
+			// at birth instead, so a freshly opened window types.
+			w.window.Send(sel("makeFirstResponder:"), w.webView)
 		}
 	})
 }

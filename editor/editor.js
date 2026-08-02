@@ -87,6 +87,11 @@ class GlazeEditor {
 			if (document.activeElement === this.ta) this.scheduleCaret();
 		};
 		document.addEventListener("selectionchange", this.onSelChange);
+		// hasFocus() flips when the WINDOW gains or loses the keyboard, which
+		// moves no selection and focuses no element — only these two hear it.
+		this.onWinFocus = () => this.paintCaret();
+		window.addEventListener("focus", this.onWinFocus);
+		window.addEventListener("blur", this.onWinFocus);
 		this.ta.addEventListener("focus", () => this.paintCaret());
 		// A click on a completion item must win over the blur it causes.
 		this.ta.addEventListener("blur", () => {
@@ -161,7 +166,12 @@ class GlazeEditor {
 	paintCaret() {
 		const a = Math.min(this.ta.selectionStart, this.ta.selectionEnd);
 		const b = Math.max(this.ta.selectionStart, this.ta.selectionEnd);
-		const focused = document.activeElement === this.ta;
+		// activeElement alone LIES: JS focus() marks the textarea inside the
+		// page even when the native view never got the keyboard, and a caret
+		// that blinks then is a promise the next keystroke will break (crg
+		// typed into one and got the system beep). hasFocus() is the document's
+		// word on whether keys actually arrive here.
+		const focused = document.activeElement === this.ta && document.hasFocus();
 
 		const at = this.lineColOf(this.ta.selectionEnd);
 		this.caret.hidden = !focused || a !== b;
@@ -578,6 +588,8 @@ class GlazeEditor {
 
 	destroy() {
 		document.removeEventListener("selectionchange", this.onSelChange);
+		window.removeEventListener("focus", this.onWinFocus);
+		window.removeEventListener("blur", this.onWinFocus);
 		cancelAnimationFrame(this.caretRaf);
 		this.host.innerHTML = "";
 		this.host.classList.remove("ge");
