@@ -73,6 +73,8 @@ func (s *bindMethodsWebViewStub) Eval(_ string) {}
 
 func (s *bindMethodsWebViewStub) Focus() {}
 
+func (s *bindMethodsWebViewStub) Raise() {}
+
 func (s *bindMethodsWebViewStub) Bind(name string, f any) error {
 	s.bindCalls++
 	if name == s.failOn {

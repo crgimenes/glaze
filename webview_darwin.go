@@ -665,6 +665,21 @@ func (w *webview) Focus() {
 	autorelease(func() { w.window.Send(sel("makeFirstResponder:"), w.webView) })
 }
 
+func (w *webview) Raise() {
+	if w.window == 0 {
+		return
+	}
+	autorelease(func() {
+		// Both halves are needed and neither substitutes for the other:
+		// activateIgnoringOtherApps brings the APPLICATION forward (without it
+		// the window rises inside an app that is still in the background, and
+		// the click that follows is still spent activating), and
+		// makeKeyAndOrderFront brings THIS window forward within the app.
+		w.app.Send(sel("activateIgnoringOtherApps:"), true)
+		w.window.Send(sel("makeKeyAndOrderFront:"), objc.ID(0))
+	})
+}
+
 func (w *webview) SetSize(width, height int, hint Hint) {
 	autorelease(func() {
 		style := uint(nsWindowStyleMaskTitled | nsWindowStyleMaskClosable | nsWindowStyleMaskMiniaturizable)

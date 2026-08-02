@@ -34,7 +34,8 @@ const (
 	wsThickFrame       = 0x00040000
 	wsMaximizeBox      = 0x00010000
 
-	swShow = 5
+	swShow    = 5
+	swRestore = 9
 
 	gwlpUserData = -21
 	gwlStyle     = -16
@@ -66,6 +67,7 @@ var (
 	postQuitMessage   func(code int32)
 	postMessageW      func(hwnd uintptr, msg uint32, wp, lp uintptr) int32
 	showWindow        func(hwnd uintptr, cmd int32) int32
+	setForegroundWin  func(hwnd uintptr) int32
 	updateWindow      func(hwnd uintptr) int32
 	destroyWindow     func(hwnd uintptr) int32
 	setWindowLongPtrW func(hwnd uintptr, index int32, val uintptr) uintptr
@@ -157,6 +159,7 @@ func ensureWinInit() error {
 		reg(&postQuitMessage, user32, "PostQuitMessage")
 		reg(&postMessageW, user32, "PostMessageW")
 		reg(&showWindow, user32, "ShowWindow")
+		reg(&setForegroundWin, user32, "SetForegroundWindow")
 		reg(&updateWindow, user32, "UpdateWindow")
 		reg(&destroyWindow, user32, "DestroyWindow")
 		reg(&setWindowLongPtrW, user32, "SetWindowLongPtrW")

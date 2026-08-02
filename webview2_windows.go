@@ -747,6 +747,20 @@ func (w *webview) Focus() {
 	asController(w.controller).MoveFocus(moveFocusReasonProgrammatic)
 }
 
+func (w *webview) Raise() {
+	if w.window == 0 {
+		return
+	}
+	// Restore first: a minimised window cannot come to the foreground, and
+	// SetForegroundWindow would report failure rather than un-minimise it.
+	showWindow(w.window, swRestore)
+	// Windows refuses the foreground to a process that has not interacted with
+	// the user recently, and flashes the taskbar button instead. That is the
+	// OS's anti-focus-stealing policy working as intended, so the result is not
+	// treated as an error.
+	setForegroundWin(w.window)
+}
+
 func (w *webview) Navigate(url string) {
 	url = w.rewriteSchemeURL(url) // map a registered scheme:// to its https vhost
 	if w.webview2 == 0 {

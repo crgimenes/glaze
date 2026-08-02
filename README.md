@@ -45,7 +45,7 @@ One caveat, "self-contained" isn't misread: glaze does **not** bundle a browser 
 - Helpers for common desktop patterns: `BindMethods`, `RenderHTML`, `AppWindow`, a Go↔JS `Events` bridge
 - Native file dialogs (`OpenFile`/`OpenFiles`/`SaveFile`/`OpenDirectory`) and a reusable native menu bar (`glaze/menu`)
 - Custom URL schemes: serve embedded assets from a portless, secure-context `app://` origin (`NewWithOptions`)
-- Window control from Go: `SetTitle`, `SetSize`, `Focus` (explicit keyboard focus into the web content)
+- Window control from Go: `SetTitle`, `SetSize`, `Focus` (keyboard focus into the web content) and `Raise` (front the window and activate the app)
 - `NewWindow(debug, window)` embeds the WebView into an existing native window (`New` is the create-a-window shortcut)
 - Plays nicely with `go.work` multi-module setups
 
@@ -273,6 +273,20 @@ macOS only; ignored on Linux and Windows, where a click on an inactive window
 already reaches the content. The mechanism is a `WKWebView` subclass answering
 `YES` to `acceptsFirstMouse:` -- AppKit asks the *view* under the cursor, so
 there is no window-level or runtime switch for it.
+
+**It is not always enough.** AppKit will deliver the click to the view, but
+WebKit hosts the page in another process and does not always forward that first
+click to the DOM while the window is not key -- measured, not assumed. When a
+program *knows* it took its own focus away (it launched a window that
+activates, say), the reliable answer is to take the focus back:
+
+```go
+w.Raise() // front the window and activate the app; the next click just works
+```
+
+`Raise` is the blunt instrument and should be used sparingly -- stealing focus
+from someone typing in another application is worse than the second click it
+saves. `Focus` is the other half: it moves the caret *inside* the page.
 
 ### Events
 

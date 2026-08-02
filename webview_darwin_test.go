@@ -28,6 +28,7 @@ var (
 	resDialogCfg   atomic.Value // string
 	resFirstMouse  atomic.Value // string
 	resHitTest     atomic.Value // string
+	resRaise       atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -47,6 +48,7 @@ func TestMain(m *testing.M) {
 		resDialogCfg.Store(dialogConfigScenario())
 		resFirstMouse.Store(firstMouseScenario())
 		resHitTest.Store(hitTestFirstMouseScenario())
+		resRaise.Store(raiseScenario())
 	}
 	os.Exit(m.Run())
 }
@@ -468,5 +470,38 @@ func TestTheViewUnderTheCursorAcceptsTheFirstMouse(t *testing.T) {
 	requireGUI(t, got)
 	if got != want {
 		t.Fatalf("hit-test first mouse: got %q, want %q", got, want)
+	}
+}
+
+// raiseScenario checks that Raise leaves the window KEY. A window that rose but
+// is not key is exactly the state Raise exists to escape: the next click on it
+// is spent activating instead of pressing what it landed on.
+func raiseScenario() string {
+	w, err := NewWithOptions(Options{})
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	defer w.Destroy()
+	win := w.(*webview).window
+
+	// Order it out first, so "already key" cannot pass for a working Raise.
+	win.Send(sel("orderOut:"), objc.ID(0))
+	if win.Send(sel("isKeyWindow")) != 0 {
+		return "the window is still key after orderOut: the fixture proves nothing"
+	}
+
+	w.Raise()
+	if win.Send(sel("isKeyWindow")) == 0 {
+		return "Raise left the window not key"
+	}
+	return "raise-ok"
+}
+
+func TestRaiseMakesTheWindowKey(t *testing.T) {
+	const want = "raise-ok"
+	got, _ := resRaise.Load().(string)
+	requireGUI(t, got)
+	if got != want {
+		t.Fatalf("Raise: got %q, want %q", got, want)
 	}
 }

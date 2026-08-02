@@ -87,6 +87,23 @@ type WebView interface {
 	// for pulling focus back into the page. Call it from the UI thread.
 	Focus()
 
+	// Raise brings the window to the FRONT and gives the application focus, so
+	// it is clickable again without the user having to click twice. This is the
+	// case Focus does not cover: Focus moves the caret inside the page, Raise
+	// moves the window in front of everything else.
+	//
+	// The case it exists for: a program that took focus away from itself —
+	// launching a child window that activates, finishing a job that raised
+	// something else — and now needs its own window usable again. On macOS that
+	// matters more than it sounds, because a click on an inactive window is
+	// spent activating it (see Options.AcceptsFirstMouse), and for web content
+	// even that opt-in is not always enough.
+	//
+	// It is deliberately blunt, which is also why it should be used sparingly:
+	// stealing focus from someone typing in another application is worse than
+	// the second click it saves. Call it from the UI thread.
+	Raise()
+
 	// Bind binds a callback function so that it will appear under the given name
 	// as a global JavaScript function. Internally it uses webview_init().
 	// Callback receives a request string and a user-provided argument pointer.

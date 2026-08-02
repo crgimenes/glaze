@@ -70,6 +70,7 @@ var (
 	gtkContainerRemove        func(container, widget uintptr)
 	gtkWidgetShow             func(widget uintptr)
 	gtkWidgetGrabFocus        func(widget uintptr)
+	gtkWindowPresent          func(window uintptr)
 	gtkWindowClose            func(window uintptr)
 
 	// GTK 4 variants (bound + used only when gtk4 is true).
@@ -220,6 +221,8 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&gtkWindowSetResizable, gtk, "gtk_window_set_resizable")
 		purego.RegisterLibFunc(&gtkWidgetSetSizeRequest, gtk, "gtk_widget_set_size_request")
 		purego.RegisterLibFunc(&gtkWidgetGrabFocus, gtk, "gtk_widget_grab_focus")
+		// Present exists in GTK3 and GTK4 alike, so no version split here.
+		purego.RegisterLibFunc(&gtkWindowPresent, gtk, "gtk_window_present")
 		purego.RegisterLibFunc(&gtkWindowClose, gtk, "gtk_window_close")
 
 		purego.RegisterLibFunc(&webkitWebViewNew, webkit, "webkit_web_view_new")
@@ -772,6 +775,17 @@ func (w *webview) Focus() {
 	// the first-show grab in windowShow already covers Alt-Tab; this is the
 	// explicit, on-demand version.
 	gtkWidgetGrabFocus(w.webview)
+}
+
+func (w *webview) Raise() {
+	if w.window == 0 {
+		return
+	}
+	// gtk_window_present raises the window and asks the window manager for
+	// focus. What the WM actually grants is its business — some refuse focus
+	// stealing and flash the taskbar entry instead, which is the right call on
+	// a desktop the user configured that way.
+	gtkWindowPresent(w.window)
 }
 
 func (w *webview) Bind(name string, f any) error {
