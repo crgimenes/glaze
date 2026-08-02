@@ -73,12 +73,18 @@ window.addEventListener('load', function () {
   })();
   function run() {
   try {
+    // A fresh document starts at its TOP — on BOTH paths, the constructor's
+    // opts.value and setValue. WebKit parks the caret at the end of an
+    // assigned value, where ArrowDown has nowhere to go: crg opened the
+    // editor (whose constructor carried the starter program), pressed it,
+    // and the caret "did not move".
     var fe = new GlazeEditor(document.getElementById('fe'),
-      {language: 'filo', completions: ['seek', 'self-x', 'self-hull']});
+      {language: 'filo', completions: ['seek', 'self-x', 'self-hull'],
+       value: '; born\n(with lines)'});
+    if (fe.ta.selectionStart !== 0) {
+      window.done('the constructor left the caret at ' + fe.ta.selectionStart + ', not at the top'); return;
+    }
     fe.setValue('; hunt\n(def n 42)\n(fire "at" n)');
-    // A freshly set document starts at its TOP: WebKit parks the caret at the
-    // end of an assigned value, where ArrowDown has nowhere to go — crg
-    // opened the editor, pressed it, and the caret "did not move".
     if (fe.ta.selectionStart !== 0) {
       window.done('setValue left the caret at ' + fe.ta.selectionStart + ', not at the top'); return;
     }

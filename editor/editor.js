@@ -68,6 +68,10 @@ class GlazeEditor {
 		this.compOpen = false;
 
 		this.ta.value = opts.value || "";
+		// Same rule as setValue: WebKit parks the caret at the END of an
+		// assigned value, and a document that opens on its last line answers
+		// ArrowDown with nothing. Born at the top, like the file just opened.
+		this.ta.setSelectionRange(0, 0);
 		this.ta.addEventListener("input", () => {
 			this.render();
 			this.refreshComp(false);
