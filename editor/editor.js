@@ -430,6 +430,12 @@ class GlazeEditor {
 		this.comp.hidden = true;
 	}
 
+	// emitChange reports the buffer to the app. Every input path ends here —
+	// typing (the input listener) and programmatic edits (edit) alike.
+	emitChange() {
+		if (this.opts.onChange) this.opts.onChange(this.getValue());
+	}
+
 	// ---- public API ---------------------------------------------------------
 
 	getValue() {

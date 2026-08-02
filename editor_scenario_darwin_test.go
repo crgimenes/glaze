@@ -64,6 +64,17 @@ window.addEventListener('load', function () {
       window.done('error mark did not land'); return;
     }
 
+    // Typing must reach the app: setRangeText + an input event is exactly what
+    // a keystroke does, and onChange is the editor's entire output channel. The
+    // first version shipped calling an emitChange that did not exist — every
+    // keystroke threw inside the event handler, silently — and this scenario
+    // missed it because it never typed.
+    var changed = '';
+    fe.opts.onChange = v => { changed = v; };
+    fe.ta.setRangeText('; typed', 0, 0, 'end');
+    fe.ta.dispatchEvent(new Event('input'));
+    if (!changed.startsWith('; typed')) { window.done('onChange never heard the keystroke'); return; }
+
     var se = new GlazeEditor(document.getElementById('se'), {language: 'sql'});
     se.setValue("SELECT count(*) FROM t -- all\n/* block\nstill */ WHERE x = 'v' AND y > 42");
     var sh = document.querySelectorAll('.ge-hl code')[1].innerHTML;
