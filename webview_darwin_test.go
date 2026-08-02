@@ -26,6 +26,7 @@ var (
 	resEmbed       atomic.Value // string
 	resOpenPanel   atomic.Value // string
 	resDialogCfg   atomic.Value // string
+	resFirstMouse  atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -43,6 +44,7 @@ func TestMain(m *testing.M) {
 		resEmbed.Store(embedScenario())
 		resOpenPanel.Store(openPanelCompletionScenario())
 		resDialogCfg.Store(dialogConfigScenario())
+		resFirstMouse.Store(firstMouseScenario())
 	}
 	os.Exit(m.Run())
 }
@@ -363,5 +365,55 @@ func TestRichBindingTypes(t *testing.T) {
 	requireGUI(t, got)
 	if got != want {
 		t.Fatalf("rich types = %q, want %q", got, want)
+	}
+}
+
+// firstMouseScenario checks the opt-in end to end against the Objective-C
+// runtime: the view a first-mouse web view is built from must ANSWER YES to
+// acceptsFirstMouse:, and a default one must keep AppKit's NO. Asking the
+// object itself is the point — a test that only compared class names would
+// pass while the method was never installed.
+func firstMouseScenario() string {
+	ask := func(opts Options) (string, bool) {
+		w, err := NewWithOptions(opts)
+		if err != nil {
+			return "new error: " + err.Error(), false
+		}
+		defer w.Destroy()
+		view := w.(*webview).webView
+		if view == 0 {
+			return "no web view was created", false
+		}
+		if view.Send(sel("respondsToSelector:"), sel("acceptsFirstMouse:")) == 0 {
+			return "the view does not respond to acceptsFirstMouse:", false
+		}
+		// A nil NSEvent is what AppKit passes when it asks about a view that is
+		// not in a window yet, and neither implementation reads it.
+		return "", bool(view.Send(sel("acceptsFirstMouse:"), objc.ID(0)) != 0)
+	}
+
+	msg, on := ask(Options{AcceptsFirstMouse: true})
+	if msg != "" {
+		return msg
+	}
+	if !on {
+		return "opted in, but the view still refuses the first mouse"
+	}
+	msg, off := ask(Options{})
+	if msg != "" {
+		return msg
+	}
+	if off {
+		return "not opted in, but the view accepts the first mouse (the default must stay AppKit's)"
+	}
+	return "first-mouse-ok"
+}
+
+func TestAcceptsFirstMouseIsOptIn(t *testing.T) {
+	const want = "first-mouse-ok"
+	got, _ := resFirstMouse.Load().(string)
+	requireGUI(t, got)
+	if got != want {
+		t.Fatalf("acceptsFirstMouse: got %q, want %q", got, want)
 	}
 }

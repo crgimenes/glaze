@@ -252,6 +252,28 @@ and `Navigate` rewrites `<scheme>://…` to it -- so your handler and your
 `Navigate` URLs use the one `scheme://` form on every platform. See
 [examples/scheme](examples/scheme/).
 
+### First click on an inactive window (macOS)
+
+On macOS a click on a window that does not have focus is spent *activating* the
+window: it never reaches the page. For a control panel, a dashboard or a player
+-- anything the user clicks in passing -- that reads as a broken button, and the
+user ends up clicking twice.
+
+```go
+w, err := glaze.NewWithOptions(glaze.Options{AcceptsFirstMouse: true})
+```
+
+It is **opt-in**, and deliberately so: the AppKit default is what protects
+destructive interfaces. In a drawing tool, an editor, or any window with a
+delete button, a click that merely raises the window must not also press
+whatever happens to sit under the cursor. Leave it off when a stray first click
+could destroy something.
+
+macOS only; ignored on Linux and Windows, where a click on an inactive window
+already reaches the content. The mechanism is a `WKWebView` subclass answering
+`YES` to `acceptsFirstMouse:` -- AppKit asks the *view* under the cursor, so
+there is no window-level or runtime switch for it.
+
 ### Events
 
 A lightweight publish/subscribe bridge between Go and JavaScript, layered on

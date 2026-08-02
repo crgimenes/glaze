@@ -40,6 +40,22 @@ type Options struct {
 	// handler, registered as a secure context. Handlers must be installed before
 	// the web view is created, so they cannot be added later.
 	SchemeHandlers map[string]SchemeHandler
+
+	// AcceptsFirstMouse makes a click on an INACTIVE window reach the page
+	// instead of only bringing the window forward.
+	//
+	// macOS only; ignored elsewhere, where a click on an inactive window already
+	// reaches the content. AppKit's default is the opposite of what most web UIs
+	// want: the first click is swallowed as activation, so a user who clicks a
+	// button in a window that lost focus has to click twice — and the first
+	// click looks broken. Turn this on for control panels, dashboards, players
+	// and anything else the user clicks in passing.
+	//
+	// It is OPT-IN because the default protects destructive interfaces: in a
+	// drawing tool, an editor, or any window with a delete button, a click that
+	// merely raises the window must NOT also press what happens to be under the
+	// cursor. Leave it off when a stray first click could destroy something.
+	AcceptsFirstMouse bool
 }
 
 // schemeMIME returns a response's MIME type or the octet-stream default.
