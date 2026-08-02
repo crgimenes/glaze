@@ -27,6 +27,7 @@ var (
 	resOpenPanel   atomic.Value // string
 	resDialogCfg   atomic.Value // string
 	resFirstMouse  atomic.Value // string
+	resHitTest     atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -45,6 +46,7 @@ func TestMain(m *testing.M) {
 		resOpenPanel.Store(openPanelCompletionScenario())
 		resDialogCfg.Store(dialogConfigScenario())
 		resFirstMouse.Store(firstMouseScenario())
+		resHitTest.Store(hitTestFirstMouseScenario())
 	}
 	os.Exit(m.Run())
 }
@@ -415,5 +417,56 @@ func TestAcceptsFirstMouseIsOptIn(t *testing.T) {
 	requireGUI(t, got)
 	if got != want {
 		t.Fatalf("acceptsFirstMouse: got %q, want %q", got, want)
+	}
+}
+
+// hitTestFirstMouseScenario checks the property that actually decides whether
+// the opt-in works: AppKit asks the view its HIT TEST lands on, not the one we
+// happen to hold a pointer to. If WebKit ever puts an internal subview in front
+// of ours, the override would still answer YES to us and NO to the user's
+// click — a silent, untestable-by-name regression.
+func hitTestFirstMouseScenario() string {
+	w, err := NewWithOptions(Options{AcceptsFirstMouse: true})
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	defer w.Destroy()
+	wv := w.(*webview).webView
+	win := w.(*webview).window
+	content := win.Send(sel("contentView"))
+	hit := content.Send(sel("hitTest:"), cgPoint{200, 200})
+
+	name := func(id objc.ID) string {
+		if id == 0 {
+			return "<nil>"
+		}
+		return cstr(id.Send(sel("className")).Send(sel("UTF8String")))
+	}
+	accepts := func(id objc.ID) string {
+		if id == 0 {
+			return "-"
+		}
+		if id.Send(sel("respondsToSelector:"), sel("acceptsFirstMouse:")) == 0 {
+			return "no-selector"
+		}
+		if id.Send(sel("acceptsFirstMouse:"), objc.ID(0)) != 0 {
+			return "YES"
+		}
+		return "NO"
+	}
+	if accepts(hit) != "YES" {
+		return "the view under the cursor refuses the first mouse: hit=" +
+			name(hit) + "/" + accepts(hit) + " webView=" + name(wv) + "/" + accepts(wv)
+	}
+	_ = content
+	return "hit-test-ok"
+}
+
+func TestTheViewUnderTheCursorAcceptsTheFirstMouse(t *testing.T) {
+	const want = "hit-test-ok"
+	got, _ := resHitTest.Load().(string)
+	requireGUI(t, got)
+	if got != want {
+		t.Fatalf("hit-test first mouse: got %q, want %q", got, want)
 	}
 }
