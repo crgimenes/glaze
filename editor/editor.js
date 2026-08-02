@@ -81,16 +81,29 @@ class GlazeEditor {
 	// are positioned arithmetically from (line, column) instead of via a mirror
 	// element, which only works because code fonts are monospace — that is the
 	// deal a code editor gets to make.
+	//
+	// The ROW height must come from the computed line-height, not from the
+	// probe's rect: an inline element reports its font's content box, which at
+	// line-height 1.45 is several pixels short of the row it actually sits in.
+	// Measured 15px against a real 18.84px row, and every consumer inherited the
+	// error — the completion list drew a quarter of a line too high per line
+	// down the file, and scrollCaretIntoView scrolled to an offset that left the
+	// caret sitting between rows.
 	measure() {
 		const probe = document.createElement("span");
 		probe.textContent = "XXXXXXXXXX";
 		probe.style.visibility = "hidden";
 		this.code.appendChild(probe);
-		const r = probe.getBoundingClientRect();
-		this.charW = r.width / 10 || 8;
-		this.lineH = r.height || 18;
+		this.charW = probe.getBoundingClientRect().width / 10 || 8;
 		probe.remove();
+
 		const cs = getComputedStyle(this.ta);
+		this.lineH = parseFloat(cs.lineHeight);
+		if (!Number.isFinite(this.lineH)) {
+			// "normal": no px value to read, so fall back to the ratio browsers
+			// use for it rather than to a magic constant.
+			this.lineH = (parseFloat(cs.fontSize) || 13) * 1.2;
+		}
 		this.padL = parseFloat(cs.paddingLeft) || 0;
 		this.padT = parseFloat(cs.paddingTop) || 0;
 	}
@@ -374,7 +387,7 @@ class GlazeEditor {
 
 	refreshComp(forced) {
 		const { word } = this.currentWord();
-		if (!forced && word.length < 2) {
+		if (!forced && word.length < 1) {
 			this.closeComp();
 			return;
 		}

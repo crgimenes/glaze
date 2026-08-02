@@ -75,6 +75,37 @@ window.addEventListener('load', function () {
     fe.ta.dispatchEvent(new Event('input'));
     if (!changed.startsWith('; typed')) { window.done('onChange never heard the keystroke'); return; }
 
+    // Geometry: the row height must be the REAL row, not the font's content
+    // box. Reading the inline probe's rect gave 15px against an 18.84px row,
+    // which drew the completion list a quarter-line too high for every line
+    // down the file and scrolled the caret to an offset between rows.
+    // Two extra lines add exactly two rows, whatever the renderer does at the
+    // ends — a difference is immune to the trailing newline and to how many
+    // text nodes the highlighter happens to emit.
+    var codeEl = document.querySelectorAll('.ge-hl code')[0];
+    fe.setValue('a');
+    var h1 = codeEl.getBoundingClientRect().height;
+    fe.setValue('a\nb\nc');
+    var h3 = codeEl.getBoundingClientRect().height;
+    var realRow = (h3 - h1) / 2;
+    if (Math.abs(fe.lineH - realRow) > 0.5) {
+      window.done('row height is ' + fe.lineH + ' but rows are ' + realRow + ' apart'); return;
+    }
+
+    // One character is enough to offer completions: a two-character rule is
+    // invisible to the user and reads as "it does not always appear".
+    fe.setValue('');
+    fe.ta.value = '(f';
+    fe.ta.setSelectionRange(2, 2);
+    fe.refreshComp(false);
+    if (!fe.compOpen) { window.done('one character offered nothing'); return; }
+    // And it is placed on the line BELOW the caret's own row.
+    var top = parseFloat(fe.comp.style.top);
+    if (Math.abs(top - (fe.padT + realRow)) > 1.5) {
+      window.done('completion list at ' + top + ', want ' + (fe.padT + realRow)); return;
+    }
+    fe.closeComp();
+
     var se = new GlazeEditor(document.getElementById('se'), {language: 'sql'});
     se.setValue("SELECT count(*) FROM t -- all\n/* block\nstill */ WHERE x = 'v' AND y > 42");
     var sh = document.querySelectorAll('.ge-hl code')[1].innerHTML;
