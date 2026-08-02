@@ -151,7 +151,29 @@ window.addEventListener('load', function () {
     // tokenizer state exists for.
     if (sh.split('ge-t-c').length < 4) { window.done('sql block comment did not span lines'); return; }
 
-    window.done('editor-ok');
+    // A held arrow key REPEATS keydown but fires keyup once, at release —
+    // a caret drawn from keyup freezes for the whole hold and materializes
+    // at the destination, which is what crg saw. The caret must follow
+    // selectionchange instead, so: move the selection WITHOUT calling any
+    // editor method and let the event alone drive the repaint. This is the
+    // one place that proves the WebView actually delivers the event.
+    fe.setValue('aaaa\nbbbb\ncccc\ndddd');
+    fe.ta.focus();
+    fe.ta.setSelectionRange(0, 0);
+    fe.paintCaret();
+    var target = fe.ta.value.indexOf('cccc');
+    fe.ta.setSelectionRange(target, target);
+    var wantY = fe.padT + 2 * realRow, tries = 0;
+    (function waitCaret() {
+      if (Math.abs(parseFloat(fe.caret.style.top) - wantY) <= 0.5) {
+        window.done('editor-ok'); return;
+      }
+      if (++tries > 40) {
+        window.done('selectionchange never moved the caret: at ' +
+          fe.caret.style.top + ', want ' + wantY); return;
+      }
+      setTimeout(waitCaret, 25);
+    })();
   } catch (e) { window.done('ERR:' + e); }
 });
 </script></body></html>`

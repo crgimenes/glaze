@@ -75,18 +75,18 @@ class GlazeEditor {
 		});
 		this.ta.addEventListener("scroll", () => this.syncScroll());
 		this.ta.addEventListener("keydown", e => this.onKey(e));
-		this.ta.addEventListener("click", () => {
-			this.closeComp();
-			this.caretMoved();
-		});
-		this.ta.addEventListener("keyup", () => {
-			if (!this.compOpen) this.caretMoved();
-		});
-		// Dragging a selection fires neither keyup nor click until it ends.
-		this.ta.addEventListener("select", () => this.paintCaret());
-		this.ta.addEventListener("mousemove", e => {
-			if (e.buttons === 1) this.paintCaret();
-		});
+		this.ta.addEventListener("click", () => this.closeComp());
+		// The caret follows selectionchange, which fires on EVERY move from any
+		// source: key auto-repeat, mouse drag, cmd-arrows, programmatic. The
+		// first version drew it from keyup — but a held arrow repeats keydown
+		// and fires keyup once, at release, so the caret froze for the whole
+		// hold and materialized at the destination. One listener replaces the
+		// keyup/select/mousemove approximations, coalesced to a frame.
+		this.caretRaf = 0;
+		this.onSelChange = () => {
+			if (document.activeElement === this.ta) this.scheduleCaret();
+		};
+		document.addEventListener("selectionchange", this.onSelChange);
 		this.ta.addEventListener("focus", () => this.paintCaret());
 		// A click on a completion item must win over the blur it causes.
 		this.ta.addEventListener("blur", () => {
@@ -287,6 +287,16 @@ class GlazeEditor {
 	}
 
 	// ---- bracket matching ---------------------------------------------------
+
+	// scheduleCaret coalesces however many selectionchange events a frame
+	// brings (a fast drag delivers several) into one repaint.
+	scheduleCaret() {
+		if (this.caretRaf) return;
+		this.caretRaf = requestAnimationFrame(() => {
+			this.caretRaf = 0;
+			this.caretMoved();
+		});
+	}
 
 	caretMoved() {
 		this.paintCaret();
@@ -567,6 +577,8 @@ class GlazeEditor {
 	}
 
 	destroy() {
+		document.removeEventListener("selectionchange", this.onSelChange);
+		cancelAnimationFrame(this.caretRaf);
 		this.host.innerHTML = "";
 		this.host.classList.remove("ge");
 	}
