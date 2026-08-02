@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/crgimenes/glaze/editor"
+	"github.com/ebitengine/purego/objc"
 )
 
 // editorScenario runs the editor package inside a real WKWebView — the only
@@ -33,6 +34,22 @@ func editorScenario() string {
 		}
 		w.Terminate()
 	})
+	// pressDown delivers a REAL ArrowDown through the window's own responder
+	// chain — window → first responder → WebKit → DOM — which is the path a
+	// user's keystroke takes and the one thing no JS-side dispatch exercises.
+	// crg opened a fresh window, pressed ArrowDown, and the caret did not
+	// move; this is the instrument that reproduces that press.
+	wv := w.(*webview)
+	_ = w.Bind("pressDown", func() {
+		dispatchMain(func() {
+			ev := class("NSEvent").Send(
+				sel("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:"),
+				nsEventTypeKeyDown, cgPoint{0, 0}, uint(0), float64(0),
+				int(wv.window.Send(sel("windowNumber"))), objc.ID(0),
+				nsstr("\uF701"), nsstr("\uF701"), false, uint16(125))
+			wv.window.Send(sel("sendEvent:"), ev)
+		})
+	})
 	time.AfterFunc(15*time.Second, w.Terminate)
 
 	page := `<!DOCTYPE html><html><head><style>` + string(editor.CSS()) + `</style></head><body>
@@ -59,6 +76,12 @@ window.addEventListener('load', function () {
     var fe = new GlazeEditor(document.getElementById('fe'),
       {language: 'filo', completions: ['seek', 'self-x', 'self-hull']});
     fe.setValue('; hunt\n(def n 42)\n(fire "at" n)');
+    // A freshly set document starts at its TOP: WebKit parks the caret at the
+    // end of an assigned value, where ArrowDown has nowhere to go — crg
+    // opened the editor, pressed it, and the caret "did not move".
+    if (fe.ta.selectionStart !== 0) {
+      window.done('setValue left the caret at ' + fe.ta.selectionStart + ', not at the top'); return;
+    }
     var html = document.querySelectorAll('.ge-hl code')[0].innerHTML;
     var miss = ['ge-t-c', 'ge-t-k', 'ge-t-n', 'ge-t-s', 'ge-t-p'].filter(c => html.indexOf(c) < 0);
     if (miss.length) { window.done('filo tokens missing: ' + miss.join(',')); return; }
@@ -181,7 +204,7 @@ window.addEventListener('load', function () {
     var wantY = fe.padT + 2 * realRow, tries = 0;
     (function waitCaret() {
       if (Math.abs(parseFloat(fe.caret.style.top) - wantY) <= 0.5) {
-        window.done('editor-ok'); return;
+        realKey(); return;
       }
       if (++tries > 40) {
         window.done('selectionchange never moved the caret: at ' +
@@ -189,6 +212,26 @@ window.addEventListener('load', function () {
       }
       setTimeout(waitCaret, 25);
     })();
+
+    // Finally, a REAL keystroke: an actual ArrowDown NSEvent sent through
+    // the window's responder chain, with no click ever delivered. This is
+    // the user's own test — open the window, press the arrow — and it
+    // fails unless the whole chain holds: the webView is first responder,
+    // the page is active, and the textarea has the DOM focus.
+    function realKey() {
+      fe.ta.focus();
+      fe.ta.setSelectionRange(0, 0);
+      window.pressDown();
+      var kt = 0;
+      (function waitKey() {
+        if (fe.ta.selectionStart === 5) { window.done('editor-ok'); return; }
+        if (++kt > 40) {
+          window.done('a real ArrowDown moved the caret to ' +
+            fe.ta.selectionStart + ', want 5 (line 2)'); return;
+        }
+        setTimeout(waitKey, 25);
+      })();
+    }
   } catch (e) { window.done('ERR:' + e); }
   }
 });

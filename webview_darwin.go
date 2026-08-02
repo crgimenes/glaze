@@ -30,6 +30,7 @@ const (
 
 	nsApplicationActivationPolicyRegular = 0
 
+	nsEventTypeKeyDown            = 10
 	nsEventTypeApplicationDefined = 15
 	nsEventMaskAny                = ^uint(0)
 

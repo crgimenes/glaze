@@ -561,6 +561,13 @@ class GlazeEditor {
 
 	setValue(v) {
 		this.ta.value = v;
+		// WebKit leaves the caret at the END of an assigned value, and a caret
+		// born on the last line answers ArrowDown with nothing — crg opened
+		// the editor, pressed it, and reasonably concluded keys were broken.
+		// A freshly opened document starts at its beginning.
+		this.ta.setSelectionRange(0, 0);
+		this.ta.scrollTop = 0;
+		this.ta.scrollLeft = 0;
 		this.errors.clear();
 		this.closeComp();
 		this.render();
