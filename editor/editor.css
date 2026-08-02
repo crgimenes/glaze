@@ -1,0 +1,140 @@
+/* GlazeEditor — theme via CSS variables, dark by default. An app overrides the
+ * variables on .ge (or a container) to match its own palette; token classes
+ * are documented in editor.js. The host element must be given a height. */
+
+.ge {
+	--ge-bg: #0b0f14;
+	--ge-fg: #c8d6e0;
+	--ge-gutter-bg: #0e141b;
+	--ge-gutter-fg: #4a5a66;
+	--ge-caret: #70e0ff;
+	--ge-sel: rgba(112, 224, 255, 0.18);
+	--ge-match-bg: rgba(112, 224, 255, 0.28);
+	--ge-err: #ff5050;
+	--ge-comp-bg: #101820;
+	--ge-comp-sel: #1c2b38;
+	--ge-border: #22303c;
+
+	--ge-t-k: #70e0ff; /* keywords / special forms   */
+	--ge-t-b: #c8a0ff; /* builtins / known functions */
+	--ge-t-s: #9fe6a0; /* strings                    */
+	--ge-t-n: #ffd080; /* numbers / constants        */
+	--ge-t-c: #5a6a72; /* comments                   */
+	--ge-t-p: #708090; /* punctuation / brackets     */
+
+	--ge-font: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+	--ge-font-size: 13px;
+	--ge-line-height: 1.45;
+
+	display: flex;
+	overflow: hidden;
+	background: var(--ge-bg);
+	border: 1px solid var(--ge-border);
+	font-family: var(--ge-font);
+	font-size: var(--ge-font-size);
+	line-height: var(--ge-line-height);
+}
+
+.ge-gutter {
+	flex: none;
+	min-width: 3.2em;
+	overflow: hidden;
+	background: var(--ge-gutter-bg);
+	border-right: 1px solid var(--ge-border);
+	color: var(--ge-gutter-fg);
+	text-align: right;
+	user-select: none;
+}
+
+.ge-nums {
+	padding: 6px 8px 6px 4px;
+	white-space: pre;
+}
+
+.ge-num-err {
+	color: var(--ge-err);
+	font-weight: bold;
+}
+
+.ge-body {
+	position: relative;
+	flex: 1;
+	overflow: hidden;
+}
+
+/* The pre and the textarea are the same box with the same metrics: the
+ * textarea supplies the caret and editing, the pre supplies the colors. */
+.ge-hl,
+.ge-ta {
+	position: absolute;
+	inset: 0;
+	margin: 0;
+	padding: 6px 8px;
+	border: 0;
+	font: inherit;
+	line-height: inherit;
+	white-space: pre;
+	overflow: hidden;
+	tab-size: 4;
+}
+
+.ge-hl {
+	color: var(--ge-fg);
+	pointer-events: none;
+}
+
+.ge-ta {
+	overflow: auto;
+	resize: none;
+	outline: none;
+	background: transparent;
+	color: transparent;
+	caret-color: var(--ge-caret);
+}
+
+.ge-ta::selection {
+	background: var(--ge-sel);
+}
+
+.ge-t-k { color: var(--ge-t-k); }
+.ge-t-b { color: var(--ge-t-b); }
+.ge-t-s { color: var(--ge-t-s); }
+.ge-t-n { color: var(--ge-t-n); }
+.ge-t-c { color: var(--ge-t-c); font-style: italic; }
+.ge-t-p { color: var(--ge-t-p); }
+
+.ge-match {
+	background: var(--ge-match-bg);
+	border-radius: 2px;
+}
+
+.ge-line-err {
+	text-decoration: underline wavy var(--ge-err) 1px;
+	text-underline-offset: 3px;
+}
+
+.ge-comp {
+	position: absolute;
+	z-index: 3;
+	max-height: 12em;
+	min-width: 10em;
+	overflow-y: auto;
+	background: var(--ge-comp-bg);
+	border: 1px solid var(--ge-border);
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+.ge-comp-it {
+	padding: 2px 10px;
+	cursor: pointer;
+	white-space: pre;
+}
+
+.ge-comp-it:hover {
+	background: var(--ge-comp-sel);
+}
+
+.ge-comp-sel {
+	background: var(--ge-comp-sel);
+	color: var(--ge-caret);
+}

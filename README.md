@@ -43,6 +43,7 @@ One caveat, "self-contained" isn't misread: glaze does **not** bundle a browser 
 - Zero bundled native libraries -- binds the OS WebView directly (WKWebView / WebKitGTK / WebView2)
 - JavaScript to Go binding
 - Helpers for common desktop patterns: `BindMethods`, `RenderHTML`, `AppWindow`, a Go↔JS `Events` bridge
+- A dependency-free code editor component (`glaze/editor`): line numbers, syntax highlighting, autocompletion, error marks — Filo and SQL definitions included, languages pluggable
 - Native file dialogs (`OpenFile`/`OpenFiles`/`SaveFile`/`OpenDirectory`) and a reusable native menu bar (`glaze/menu`)
 - Custom URL schemes: serve embedded assets from a portless, secure-context `app://` origin (`NewWithOptions`)
 - Window control from Go: `SetTitle`, `SetSize`, `Focus` (keyboard focus into the web content) and `Raise` (front the window and activate the app)

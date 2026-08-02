@@ -29,6 +29,7 @@ var (
 	resFirstMouse  atomic.Value // string
 	resHitTest     atomic.Value // string
 	resRaise       atomic.Value // string
+	resEditor      atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -49,6 +50,7 @@ func TestMain(m *testing.M) {
 		resFirstMouse.Store(firstMouseScenario())
 		resHitTest.Store(hitTestFirstMouseScenario())
 		resRaise.Store(raiseScenario())
+		resEditor.Store(editorScenario())
 	}
 	os.Exit(m.Run())
 }
