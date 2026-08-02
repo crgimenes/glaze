@@ -36,18 +36,32 @@ class GlazeEditor {
 		this.matchKey = "";
 
 		host.classList.add("ge");
+		// The caret and the selection are DRAWN HERE, not by the textarea.
+		// A textarea paints both over the font's content box aligned to the top
+		// of the line box, while the glyphs sit centred in that box — so with any
+		// comfortable line-height they are offset from the text by the
+		// half-leading, which is exactly what a user sees as "the caret is not on
+		// the line" and "the selection does not match the line height". The
+		// textarea keeps everything that matters (editing, undo, IME, native
+		// keys) with its own caret and selection made invisible; these two
+		// layers put them back where the text actually is, which monospace
+		// geometry makes exact.
 		host.innerHTML =
 			'<div class="ge-gutter"><div class="ge-nums">1</div></div>' +
 			'<div class="ge-body">' +
+			'<div class="ge-sel" aria-hidden="true"></div>' +
 			'<pre class="ge-hl" aria-hidden="true"><code></code></pre>' +
 			'<textarea class="ge-ta" spellcheck="false" autocapitalize="off" ' +
 			'autocomplete="off" autocorrect="off" wrap="off"></textarea>' +
+			'<div class="ge-caret" aria-hidden="true" hidden></div>' +
 			'<div class="ge-comp" hidden></div>' +
 			"</div>";
 		this.nums = host.querySelector(".ge-nums");
 		this.pre = host.querySelector(".ge-hl");
 		this.code = this.pre.querySelector("code");
 		this.ta = host.querySelector(".ge-ta");
+		this.sel = host.querySelector(".ge-sel");
+		this.caret = host.querySelector(".ge-caret");
 		this.comp = host.querySelector(".ge-comp");
 		this.compList = [];
 		this.compIdx = 0;
@@ -68,11 +82,21 @@ class GlazeEditor {
 		this.ta.addEventListener("keyup", () => {
 			if (!this.compOpen) this.caretMoved();
 		});
+		// Dragging a selection fires neither keyup nor click until it ends.
+		this.ta.addEventListener("select", () => this.paintCaret());
+		this.ta.addEventListener("mousemove", e => {
+			if (e.buttons === 1) this.paintCaret();
+		});
+		this.ta.addEventListener("focus", () => this.paintCaret());
 		// A click on a completion item must win over the blur it causes.
-		this.ta.addEventListener("blur", () => setTimeout(() => this.closeComp(), 150));
+		this.ta.addEventListener("blur", () => {
+			this.paintCaret();
+			setTimeout(() => this.closeComp(), 150);
+		});
 
 		this.measure();
 		this.render();
+		this.paintCaret();
 	}
 
 	// ---- geometry -----------------------------------------------------------
@@ -112,6 +136,65 @@ class GlazeEditor {
 		this.pre.scrollTop = this.ta.scrollTop;
 		this.pre.scrollLeft = this.ta.scrollLeft;
 		this.nums.style.transform = "translateY(" + -this.ta.scrollTop + "px)";
+		this.paintCaret();
+	}
+
+	// lineColOf turns an absolute offset into a (line, column) pair.
+	lineColOf(pos) {
+		const before = this.ta.value.slice(0, pos);
+		const nl = before.lastIndexOf("\n");
+		return { line: (before.match(/\n/g) || []).length, col: before.length - nl - 1 };
+	}
+
+	// xOf / yOf place a (line, column) in the body's own coordinates, scroll
+	// included. Monospace is what makes this arithmetic instead of a mirror.
+	xOf(col) {
+		return this.padL + col * this.charW - this.ta.scrollLeft;
+	}
+
+	yOf(line) {
+		return this.padT + line * this.lineH - this.ta.scrollTop;
+	}
+
+	// paintCaret draws the caret and the selection where the TEXT is. Called
+	// from every path that can move either.
+	paintCaret() {
+		const a = Math.min(this.ta.selectionStart, this.ta.selectionEnd);
+		const b = Math.max(this.ta.selectionStart, this.ta.selectionEnd);
+		const focused = document.activeElement === this.ta;
+
+		const at = this.lineColOf(this.ta.selectionEnd);
+		this.caret.hidden = !focused || a !== b;
+		this.caret.style.left = this.xOf(at.col) + "px";
+		this.caret.style.top = this.yOf(at.line) + "px";
+		this.caret.style.height = this.lineH + "px";
+		// Restart the blink on every move, the way a real caret does.
+		this.caret.style.animation = "none";
+		void this.caret.offsetWidth;
+		this.caret.style.animation = "";
+
+		if (a === b) {
+			this.sel.textContent = "";
+			return;
+		}
+		const from = this.lineColOf(a);
+		const to = this.lineColOf(b);
+		const lines = this.ta.value.split("\n");
+		let html = "";
+		for (let li = from.line; li <= to.line; li++) {
+			const startCol = li === from.line ? from.col : 0;
+			// A selection that runs past a line's end shows the newline as a
+			// sliver of a character, which is how editors say "this break is
+			// selected too".
+			const endCol = li === to.line ? to.col : lines[li].length + 1;
+			if (endCol <= startCol) {
+				continue;
+			}
+			html +=
+				'<i style="left:' + this.xOf(startCol) + "px;top:" + this.yOf(li) +
+				"px;width:" + (endCol - startCol) * this.charW + "px;height:" + this.lineH + 'px"></i>';
+		}
+		this.sel.innerHTML = html;
 	}
 
 	scrollCaretIntoView() {
@@ -206,6 +289,7 @@ class GlazeEditor {
 	// ---- bracket matching ---------------------------------------------------
 
 	caretMoved() {
+		this.paintCaret();
 		const pair = this.findPair(this.ta.value, this.ta.selectionStart);
 		const key = pair ? pair.join(",") : "";
 		if (key === this.matchKey) return;
@@ -460,6 +544,7 @@ class GlazeEditor {
 		this.errors.clear();
 		this.closeComp();
 		this.render();
+		this.paintCaret();
 	}
 
 	setCompletions(list) {

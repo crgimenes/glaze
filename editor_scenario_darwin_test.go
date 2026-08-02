@@ -106,6 +106,42 @@ window.addEventListener('load', function () {
     }
     fe.closeComp();
 
+    // The caret and the selection are DRAWN, and they must land on the text's
+    // own row — the textarea's native ones sit a half-leading above it, which
+    // is what crg saw as a caret off its line and a selection that did not
+    // match the line height.
+    fe.setValue('aaaa\nbbbb\ncccc\ndddd');
+    fe.ta.focus();
+    var caretAt = fe.ta.value.indexOf('cccc') + 2;   // line 3, column 2
+    fe.ta.setSelectionRange(caretAt, caretAt);
+    fe.paintCaret();
+    if (fe.caret.hidden) { window.done('the caret is not drawn while focused'); return; }
+    var wantTop = fe.padT + 2 * realRow, wantLeft = fe.padL + 2 * fe.charW;
+    var gotTop = parseFloat(fe.caret.style.top), gotLeft = parseFloat(fe.caret.style.left);
+    if (Math.abs(gotTop - wantTop) > 0.5 || Math.abs(gotLeft - wantLeft) > 0.5) {
+      window.done('caret at ' + gotLeft + ',' + gotTop + ' want ' + wantLeft + ',' + wantTop); return;
+    }
+    if (Math.abs(parseFloat(fe.caret.style.height) - realRow) > 0.5) {
+      window.done('the caret is ' + fe.caret.style.height + ' tall on a ' + realRow + 'px row'); return;
+    }
+
+    // A selection spanning three lines draws one band per line, each a full
+    // row tall and starting on the row's own top.
+    fe.ta.setSelectionRange(fe.ta.value.indexOf('bbbb'), fe.ta.value.indexOf('dddd') + 2);
+    fe.paintCaret();
+    var bands = fe.sel.children;
+    if (bands.length !== 3) { window.done('three selected lines drew ' + bands.length + ' bands'); return; }
+    if (!fe.caret.hidden) { window.done('the caret is drawn over a range selection'); return; }
+    if (Math.abs(parseFloat(bands[0].style.top) - (fe.padT + realRow)) > 0.5) {
+      window.done('the first band is at ' + bands[0].style.top + ', off its row'); return;
+    }
+    if (Math.abs(parseFloat(bands[0].style.height) - realRow) > 0.5) {
+      window.done('a band is ' + bands[0].style.height + ' on a ' + realRow + 'px row'); return;
+    }
+    fe.ta.setSelectionRange(0, 0);
+    fe.paintCaret();
+    if (fe.sel.children.length !== 0) { window.done('bands survived the selection being cleared'); return; }
+
     var se = new GlazeEditor(document.getElementById('se'), {language: 'sql'});
     se.setValue("SELECT count(*) FROM t -- all\n/* block\nstill */ WHERE x = 'v' AND y > 42");
     var sh = document.querySelectorAll('.ge-hl code')[1].innerHTML;

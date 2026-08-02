@@ -89,11 +89,49 @@
 	outline: none;
 	background: transparent;
 	color: transparent;
-	caret-color: var(--ge-caret);
+	/* The caret and the selection are drawn by .ge-caret and .ge-sel, on the
+	 * text's own geometry. A textarea paints its own over the font's content
+	 * box aligned to the TOP of the line box, while glyphs sit centred in it —
+	 * so at any comfortable line-height both land a half-leading above the
+	 * text they belong to. Hiding them is what lets the drawn ones be exact. */
+	caret-color: transparent;
 }
 
 .ge-ta::selection {
+	background: transparent;
+}
+
+/* Selection rectangles, one per selected line, behind the text. */
+.ge-sel {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	overflow: hidden;
+}
+
+.ge-sel > i {
+	position: absolute;
 	background: var(--ge-sel);
+}
+
+.ge-caret {
+	position: absolute;
+	width: 2px;
+	background: var(--ge-caret);
+	pointer-events: none;
+	animation: ge-blink 1.06s step-end infinite;
+}
+
+.ge-caret[hidden] {
+	display: none;
+}
+
+@keyframes ge-blink {
+	50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ge-caret { animation: none; }
 }
 
 .ge-t-k { color: var(--ge-t-k); }
