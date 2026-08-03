@@ -16,6 +16,12 @@ func setAppIcon(png []byte) error {
 	if len(png) == 0 {
 		return errors.New("glaze: the application icon is empty")
 	}
+	// The icon may be set before any window exists, so nothing has necessarily
+	// loaded AppKit yet and the objc lookups below would find no classes.
+	err := ensureInit()
+	if err != nil {
+		return err
+	}
 	var failed bool
 	autorelease(func() {
 		// #nosec G103 -- dataWithBytes:length: copies the buffer before it returns

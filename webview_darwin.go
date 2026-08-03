@@ -102,6 +102,8 @@ func cstr(id objc.ID) string {
 
 // autorelease wraps f in an NSAutoreleasePool, draining it afterward.
 func autorelease(f func()) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	pool := class("NSAutoreleasePool").Send(sel("alloc")).Send(sel("init"))
 	defer pool.Send(sel("drain"))
 	f()
