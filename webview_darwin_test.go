@@ -19,17 +19,18 @@ import (
 // runner has a window server, so no virtual display is needed.
 
 var (
-	resBridge      atomic.Value // string
-	resErrorUnbind atomic.Value // string
-	resRichTypes   atomic.Value // string
-	resMultiWindow atomic.Value // string
-	resEmbed       atomic.Value // string
-	resOpenPanel   atomic.Value // string
-	resDialogCfg   atomic.Value // string
-	resFirstMouse  atomic.Value // string
-	resHitTest     atomic.Value // string
-	resRaise       atomic.Value // string
-	resEditor      atomic.Value // string
+	resBridge       atomic.Value // string
+	resErrorUnbind  atomic.Value // string
+	resRichTypes    atomic.Value // string
+	resMultiWindow  atomic.Value // string
+	resEmbed        atomic.Value // string
+	resOpenPanel    atomic.Value // string
+	resDialogCfg    atomic.Value // string
+	resFirstMouse   atomic.Value // string
+	resHitTest      atomic.Value // string
+	resRaise        atomic.Value // string
+	resEditor       atomic.Value // string
+	resExternalLoop atomic.Value // string
 )
 
 func TestMain(m *testing.M) {
@@ -51,6 +52,8 @@ func TestMain(m *testing.M) {
 		resHitTest.Store(hitTestFirstMouseScenario())
 		resRaise.Store(raiseScenario())
 		resEditor.Store(editorScenario())
+		// Last: this scenario runs its own [NSApp run] as the "external" host.
+		resExternalLoop.Store(externalLoopScenario())
 	}
 	os.Exit(m.Run())
 }
@@ -505,5 +508,74 @@ func TestRaiseMakesTheWindowKey(t *testing.T) {
 	requireGUI(t, got)
 	if got != want {
 		t.Fatalf("Raise: got %q, want %q", got, want)
+	}
+}
+
+// externalLoopScenario reproduces issue #31: a host (native/tray) already
+// drives [NSApp run] on the main thread and the webview is created from a
+// plain goroutine. Before the fix, New hung forever in a second [NSApp run]
+// waiting for an applicationDidFinishLaunching that had already fired. The
+// scenario drives the full lifecycle — create, configure, Run, Terminate,
+// Destroy — and checks the host loop survives the window.
+func externalLoopScenario() string {
+	app := class("NSApplication").Send(sel("sharedApplication"))
+	res := make(chan string, 1)
+
+	go func() {
+		verdict := func() string {
+			for i := 0; app.Send(sel("isRunning")) == 0; i++ {
+				if i > 500 {
+					return "host loop never started"
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			done := make(chan string, 1)
+			go func() {
+				w, err := New(false)
+				if err != nil {
+					done <- "new error: " + err.Error()
+					return
+				}
+				defer w.Destroy()
+				w.SetTitle("external loop")
+				w.SetHtml("<html><body>issue 31</body></html>")
+				go func() {
+					time.Sleep(500 * time.Millisecond)
+					w.Terminate()
+				}()
+				w.Run()
+				done <- "external-loop-ok"
+			}()
+			select {
+			case s := <-done:
+				return s
+			case <-time.After(15 * time.Second):
+				return "timeout: New or Run blocked under a running loop (issue #31)"
+			}
+		}()
+		if app.Send(sel("isRunning")) == 0 {
+			// The webview must not have stopped the host's loop on its way out.
+			verdict += " (webview close stopped the host loop)"
+		}
+		res <- verdict
+		// Stop the host loop; the scenario owns it, glaze must not.
+		dispatchMain(func() {
+			autorelease(func() {
+				app.Send(sel("stop:"), objc.ID(0))
+				postWakeEvent(app)
+			})
+		})
+	}()
+
+	app.Send(sel("run")) // the "tray": owns the run loop on the main thread
+	return <-res
+}
+
+func TestNewUnderAnExternalRunLoop(t *testing.T) {
+	const want = "external-loop-ok"
+	got, _ := resExternalLoop.Load().(string)
+	requireGUI(t, got)
+	if got != want {
+		t.Fatalf("external run loop: got %q, want %q", got, want)
 	}
 }

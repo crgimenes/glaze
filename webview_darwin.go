@@ -378,6 +378,42 @@ func dispatchMain(f func()) {
 	dispatchAsyncF(mainQueue, id, dispatchWork)
 }
 
+// onMainThread reports whether the caller runs on the process main thread —
+// the only thread AppKit accepts UI work from.
+func onMainThread() bool {
+	return class("NSThread").Send(sel("isMainThread")) != 0
+}
+
+// uiIsMain records, at first webview creation, whether the UI runs on the
+// process main thread. True in both supported shapes: creation on the main
+// thread (the normal contract), and creation marshaled to the main thread
+// because another owner's run loop is already there (native/tray). False only
+// under the legacy single-goroutine shape — everything pinned to a secondary
+// thread — where the main dispatch queue is never drained, so marshaling to
+// it would hang; performOnMain then runs inline, preserving that shape's
+// historical behavior.
+var (
+	uiIsMainOnce sync.Once
+	uiIsMain     bool
+)
+
+// performOnMain runs f on the UI thread and waits for it, running inline when
+// the caller is already there (or when the UI thread is not the main thread —
+// see uiIsMain). Off the UI thread it queues onto the main dispatch queue and
+// blocks until a running run loop drains it.
+func performOnMain(f func()) {
+	if onMainThread() || !uiIsMain {
+		f()
+		return
+	}
+	done := make(chan struct{})
+	dispatchMain(func() {
+		defer close(done)
+		f()
+	})
+	<-done
+}
+
 // --- process-wide lifecycle bookkeeping ------------------------------------
 
 var (
@@ -385,6 +421,12 @@ var (
 	notFirst     bool
 	windowCount  int32
 	uiThreadOnce sync.Once
+
+	// glazeRunsLoop is true while OUR Run() drives [NSApp run]. When the loop
+	// belongs to someone else (native/tray started it before the first webview
+	// existed), it stays false: closing the last glaze window must not stop a
+	// loop we do not own, and Terminate must not stop it either.
+	glazeRunsLoop atomic.Bool
 )
 
 func getAndSetIsFirstInstance() bool {
@@ -423,6 +465,12 @@ type webview struct {
 	isSizeSet         bool
 	isInitScriptAdded bool
 
+	// closed is closed when this window goes away (user close or Destroy);
+	// Run() waits on it instead of re-running NSApp when the run loop already
+	// belongs to someone else. closeOnce makes the two close paths safe.
+	closed    chan struct{}
+	closeOnce sync.Once
+
 	mu             sync.Mutex
 	bindings       map[string]func(id, req string) (any, error)
 	userScriptSrcs []string
@@ -452,30 +500,65 @@ func New(debug bool) (WebView, error) { return NewWindow(debug, nil) }
 //
 // The first successful call pins the calling goroutine to its OS thread; keep
 // all direct UI calls on that goroutine and re-enter through Dispatch from
-// background goroutines.
+// background goroutines. Exception: when the application run loop is already
+// running (started by native/tray or another owner), NewWindow may be called
+// from any goroutine — creation and the UI-touching methods marshal
+// themselves to the main thread.
 func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 	return NewWithOptions(Options{Debug: debug, Window: window})
 }
 
 // NewWithOptions creates a web view configured by opts, including any custom
 // SchemeHandlers (which must be installed before the WKWebView is created).
+//
+// When called off the main thread while the application run loop is already
+// running (a native/tray app whose loop was started first — issue #31), the
+// creation is marshaled to the main thread and every UI-touching method of
+// the returned WebView marshals itself the same way, so the webview can be
+// driven from that goroutine.
 func NewWithOptions(opts Options) (WebView, error) {
 	err := ensureInit()
 	if err != nil {
 		return nil, err
 	}
-	uiThreadOnce.Do(runtime.LockOSThread)
 
+	app := class("NSApplication").Send(sel("sharedApplication"))
+	loopRunning := app.Send(sel("isRunning")) != 0
+	uiIsMainOnce.Do(func() { uiIsMain = onMainThread() || loopRunning })
+
+	if !onMainThread() && loopRunning {
+		// Someone else's run loop is draining the main queue: build the whole
+		// webview over there. Doing it here would run AppKit off the main
+		// thread, and the old bootstrap path would hang in a second [NSApp
+		// run] waiting for an applicationDidFinishLaunching that already fired.
+		var w WebView
+		performOnMain(func() { w = newWebView(opts, app, loopRunning) })
+		return w, nil
+	}
+
+	uiThreadOnce.Do(runtime.LockOSThread)
+	return newWebView(opts, app, loopRunning), nil
+}
+
+// newWebView builds the webview on the UI thread.
+func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 	w := &webview{
 		ownsWindow:     true,
 		debug:          opts.Debug,
 		firstMouse:     opts.AcceptsFirstMouse,
 		bindings:       map[string]func(id, req string) (any, error){},
 		schemeHandlers: opts.SchemeHandlers,
+		closed:         make(chan struct{}),
 	}
-	w.app = class("NSApplication").Send(sel("sharedApplication"))
+	w.app = app
 	w.windowInit(objc.ID(uintptr(opts.Window)))
 	w.windowSettings(opts.Debug)
+	if loopRunning && w.ownsWindow {
+		// The loop's owner picked the activation policy (a tray app runs as
+		// Accessory, no Dock icon — leave that alone); activate so the new
+		// window actually fronts instead of opening behind the current app.
+		w.Raise()
+	}
 	if w.ownsWindow && w.isInitScriptAdded {
 		dispatchMain(func() {
 			if !w.isSizeSet {
@@ -483,7 +566,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 			}
 		})
 	}
-	return w, nil
+	return w
 }
 
 func (w *webview) windowInit(window objc.ID) {
@@ -493,7 +576,13 @@ func (w *webview) windowInit(window objc.ID) {
 			w.ownsWindow = false
 			return
 		}
-		if !getAndSetIsFirstInstance() {
+		// The bootstrap below exists to finish launching the app: it installs
+		// an app delegate and spins a temporary [NSApp run] that the delegate
+		// stops from applicationDidFinishLaunching. If the run loop is already
+		// running (native/tray started it), the app finished launching long
+		// ago — that notification will never fire again and the temporary run
+		// would block forever. Skip straight to window creation.
+		if w.app.Send(sel("isRunning")) != 0 || !getAndSetIsFirstInstance() {
 			w.windowInitProceed()
 			return
 		}
@@ -608,17 +697,24 @@ func (w *webview) windowSettings(debug bool) {
 func (w *webview) stopRunLoop() {
 	autorelease(func() {
 		w.app.Send(sel("stop:"), objc.ID(0))
-		event := class("NSEvent").Send(
-			sel("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"),
-			nsEventTypeApplicationDefined, cgPoint{0, 0}, uint(0), float64(0), 0, objc.ID(0), int16(0), 0, 0)
-		w.app.Send(sel("postEvent:atStart:"), event, true)
+		postWakeEvent(w.app)
 	})
+}
+
+// postWakeEvent posts a no-op application-defined event so a thread blocked in
+// nextEventMatchingMask wakes up (stop: alone only takes effect after an event).
+func postWakeEvent(app objc.ID) {
+	event := class("NSEvent").Send(
+		sel("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"),
+		nsEventTypeApplicationDefined, cgPoint{0, 0}, uint(0), float64(0), 0, objc.ID(0), int16(0), 0, 0)
+	app.Send(sel("postEvent:atStart:"), event, true)
 }
 
 func (w *webview) onWindowWillClose() {
 	w.widget = 0
 	w.webView = 0
 	w.window = 0
+	w.closeOnce.Do(func() { close(w.closed) })
 	dispatchMain(func() { w.onWindowDestroyed(false) })
 }
 
@@ -631,7 +727,9 @@ func (w *webview) onWindowDestroyed(skipTermination bool) {
 		// nil and no-ops.
 		unregisterInstance(w.windowDelegate)
 	}
-	if decWindowCount() <= 0 && !skipTermination {
+	// Last owned window gone: stop the loop — but only when Run() drives it.
+	// An external owner's loop (native/tray) outlives every glaze window.
+	if decWindowCount() <= 0 && !skipTermination && glazeRunsLoop.Load() {
 		w.Terminate()
 	}
 }
@@ -647,12 +745,62 @@ func isAppBundled() bool {
 
 // --- public API (WebView interface) ----------------------------------------
 
-func (w *webview) Run() { w.app.Send(sel("run")) }
+func (w *webview) Run() {
+	if w.app.Send(sel("isRunning")) != 0 {
+		// A run loop is already active — an external owner's (native/tray) or
+		// our own driving another window. Re-running NSApp would fight it, so
+		// Run means "until THIS window closes". Off the UI thread, waiting on
+		// the channel is enough; on it (a Run inside a tray OnClick or another
+		// run-loop callout), block-waiting would starve the loop that must
+		// deliver the close, so pump events until the window goes away.
+		if onMainThread() {
+			w.pumpUntilClosed()
+			return
+		}
+		<-w.closed
+		return
+	}
+	glazeRunsLoop.Store(true)
+	w.app.Send(sel("run"))
+	glazeRunsLoop.Store(false)
+}
+
+// pumpUntilClosed services the event queue on the UI thread until this window
+// closes — a nested, modal-style loop for a Run() issued from inside a run-loop
+// callout (e.g. a tray menu handler).
+func (w *webview) pumpUntilClosed() {
+	distantFuture := class("NSDate").Send(sel("distantFuture"))
+	for {
+		select {
+		case <-w.closed:
+			return
+		default:
+		}
+		autorelease(func() {
+			ev := w.app.Send(sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
+				nsEventMaskAny, distantFuture, nsstr("kCFRunLoopDefaultMode"), true)
+			if ev != 0 {
+				w.app.Send(sel("sendEvent:"), ev)
+			}
+		})
+	}
+}
 
 // Terminate stops the run loop. Per the WebView contract it is safe to call from
 // a background thread, so the AppKit calls in stopRunLoop are routed to the main
 // thread (bindings run on goroutines), matching the Linux/Windows backends.
-func (w *webview) Terminate() { dispatchMain(w.stopRunLoop) }
+//
+// When the run loop belongs to someone else (native/tray), stopping it would
+// kill the owner's app; Terminate then only ends this webview's Run wait, and
+// the caller's Destroy closes the window.
+func (w *webview) Terminate() {
+	if w.app.Send(sel("isRunning")) != 0 && !glazeRunsLoop.Load() {
+		w.closeOnce.Do(func() { close(w.closed) })
+		dispatchMain(func() { autorelease(func() { postWakeEvent(w.app) }) })
+		return
+	}
+	dispatchMain(w.stopRunLoop)
+}
 
 func (w *webview) Dispatch(f func()) { dispatchMain(f) }
 
@@ -662,7 +810,9 @@ func (w *webview) Window() unsafe.Pointer {
 }
 
 func (w *webview) SetTitle(title string) {
-	autorelease(func() { w.window.Send(sel("setTitle:"), nsstr(title)) })
+	performOnMain(func() {
+		autorelease(func() { w.window.Send(sel("setTitle:"), nsstr(title)) })
+	})
 }
 
 func (w *webview) Focus() {
@@ -672,43 +822,49 @@ func (w *webview) Focus() {
 	// Largely redundant: an NSWindow makes its content view the first responder
 	// when it becomes key, and restores it on re-activation. Kept as the explicit,
 	// on-demand path and to mirror the other backends.
-	autorelease(func() { w.window.Send(sel("makeFirstResponder:"), w.webView) })
+	performOnMain(func() {
+		autorelease(func() { w.window.Send(sel("makeFirstResponder:"), w.webView) })
+	})
 }
 
 func (w *webview) Raise() {
 	if w.window == 0 {
 		return
 	}
-	autorelease(func() {
-		// Both halves are needed and neither substitutes for the other:
-		// activateIgnoringOtherApps brings the APPLICATION forward (without it
-		// the window rises inside an app that is still in the background, and
-		// the click that follows is still spent activating), and
-		// makeKeyAndOrderFront brings THIS window forward within the app.
-		w.app.Send(sel("activateIgnoringOtherApps:"), true)
-		w.window.Send(sel("makeKeyAndOrderFront:"), objc.ID(0))
+	performOnMain(func() {
+		autorelease(func() {
+			// Both halves are needed and neither substitutes for the other:
+			// activateIgnoringOtherApps brings the APPLICATION forward (without it
+			// the window rises inside an app that is still in the background, and
+			// the click that follows is still spent activating), and
+			// makeKeyAndOrderFront brings THIS window forward within the app.
+			w.app.Send(sel("activateIgnoringOtherApps:"), true)
+			w.window.Send(sel("makeKeyAndOrderFront:"), objc.ID(0))
+		})
 	})
 }
 
 func (w *webview) SetSize(width, height int, hint Hint) {
-	autorelease(func() {
-		style := uint(nsWindowStyleMaskTitled | nsWindowStyleMaskClosable | nsWindowStyleMaskMiniaturizable)
-		if hint != HintFixed {
-			style |= nsWindowStyleMaskResizable
-		}
-		w.window.Send(sel("setStyleMask:"), style)
-		size := cgSize{float64(width), float64(height)}
-		switch hint {
-		case HintMin:
-			w.window.Send(sel("setContentMinSize:"), size)
-		case HintMax:
-			w.window.Send(sel("setContentMaxSize:"), size)
-		default:
-			// setContentSize keeps the top-left corner fixed, avoiding a
-			// struct-return read of the current frame.
-			w.window.Send(sel("setContentSize:"), size)
-		}
-		w.window.Send(sel("center"))
+	performOnMain(func() {
+		autorelease(func() {
+			style := uint(nsWindowStyleMaskTitled | nsWindowStyleMaskClosable | nsWindowStyleMaskMiniaturizable)
+			if hint != HintFixed {
+				style |= nsWindowStyleMaskResizable
+			}
+			w.window.Send(sel("setStyleMask:"), style)
+			size := cgSize{float64(width), float64(height)}
+			switch hint {
+			case HintMin:
+				w.window.Send(sel("setContentMinSize:"), size)
+			case HintMax:
+				w.window.Send(sel("setContentMaxSize:"), size)
+			default:
+				// setContentSize keeps the top-left corner fixed, avoiding a
+				// struct-return read of the current frame.
+				w.window.Send(sel("setContentSize:"), size)
+			}
+			w.window.Send(sel("center"))
+		})
 	})
 	w.isSizeSet = true
 }
@@ -717,23 +873,29 @@ func (w *webview) Navigate(url string) {
 	if url == "" {
 		url = "about:blank"
 	}
-	autorelease(func() {
-		nsurl := class("NSURL").Send(sel("URLWithString:"), nsstr(url))
-		req := class("NSURLRequest").Send(sel("requestWithURL:"), nsurl)
-		w.webView.Send(sel("loadRequest:"), req)
+	performOnMain(func() {
+		autorelease(func() {
+			nsurl := class("NSURL").Send(sel("URLWithString:"), nsstr(url))
+			req := class("NSURLRequest").Send(sel("requestWithURL:"), nsurl)
+			w.webView.Send(sel("loadRequest:"), req)
+		})
 	})
 }
 
 func (w *webview) SetHtml(html string) {
-	autorelease(func() {
-		w.webView.Send(sel("loadHTMLString:baseURL:"), nsstr(html), objc.ID(0))
+	performOnMain(func() {
+		autorelease(func() {
+			w.webView.Send(sel("loadHTMLString:baseURL:"), nsstr(html), objc.ID(0))
+		})
 	})
 }
 
 func (w *webview) Init(js string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.pushUserScript(js)
+	performOnMain(func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		w.pushUserScript(js)
+	})
 }
 
 func (w *webview) Eval(js string) {
@@ -744,8 +906,10 @@ func (w *webview) Eval(js string) {
 	// loadHTMLString with a nil baseURL, which leaves WKWebView.URL nil, so such a
 	// guard would block every Eval on SetHtml pages. Evaluating before load is
 	// harmless on WKWebView (the completion handler, which we ignore, just errors).
-	autorelease(func() {
-		w.webView.Send(sel("evaluateJavaScript:completionHandler:"), nsstr(js), objc.ID(0))
+	performOnMain(func() {
+		autorelease(func() {
+			w.webView.Send(sel("evaluateJavaScript:completionHandler:"), nsstr(js), objc.ID(0))
+		})
 	})
 }
 
@@ -754,29 +918,44 @@ func (w *webview) Bind(name string, f any) error {
 	if err != nil {
 		return err
 	}
-	w.mu.Lock()
-	_, exists := w.bindings[name]
-	if exists {
-		w.mu.Unlock()
-		return errors.New("function name already bound")
+	// The script rebuild touches the WKUserContentController, so it runs on the
+	// UI thread; taking mu inside the marshaled closure keeps every mu+AppKit
+	// section on one thread (no lock held across a thread hop).
+	var bindErr error
+	performOnMain(func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		_, exists := w.bindings[name]
+		if exists {
+			bindErr = errors.New("function name already bound")
+			return
+		}
+		w.bindings[name] = wrapper
+		w.rebuildScriptsLocked()
+	})
+	if bindErr != nil {
+		return bindErr
 	}
-	w.bindings[name] = wrapper
-	w.rebuildScriptsLocked()
-	w.mu.Unlock()
 	w.Eval(fmt.Sprintf("if(window.__webview__){window.__webview__.onBind(%s)}", marshalJSON(name)))
 	return nil
 }
 
 func (w *webview) Unbind(name string) error {
-	w.mu.Lock()
-	_, exists := w.bindings[name]
-	if !exists {
-		w.mu.Unlock()
-		return errors.New("function name not bound")
+	var unbindErr error
+	performOnMain(func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		_, exists := w.bindings[name]
+		if !exists {
+			unbindErr = errors.New("function name not bound")
+			return
+		}
+		delete(w.bindings, name)
+		w.rebuildScriptsLocked()
+	})
+	if unbindErr != nil {
+		return unbindErr
 	}
-	delete(w.bindings, name)
-	w.rebuildScriptsLocked()
-	w.mu.Unlock()
 	w.Eval(fmt.Sprintf("if(window.__webview__){window.__webview__.onUnbind(%s)}", marshalJSON(name)))
 	return nil
 }
@@ -784,6 +963,10 @@ func (w *webview) Unbind(name string) error {
 // Destroy releases the web view and closes the native window, mirroring
 // webview's cocoa destructor (release order matters for AppKit/WebKit).
 func (w *webview) Destroy() {
+	performOnMain(func() { w.destroyOnUI() })
+}
+
+func (w *webview) destroyOnUI() {
 	autorelease(func() {
 		if w.window != 0 {
 			if w.webView != 0 {
@@ -833,7 +1016,16 @@ func (w *webview) Destroy() {
 		}
 		w.schemeHandlerObjs = nil
 	})
-	if w.ownsWindow {
+	// Unblock a Run() waiting on this window, and wake a pumpUntilClosed
+	// parked in nextEventMatchingMask so it notices.
+	w.closeOnce.Do(func() { close(w.closed) })
+	autorelease(func() { postWakeEvent(w.app) })
+	if w.ownsWindow && !glazeRunsLoop.Load() && w.app.Send(sel("isRunning")) == 0 {
+		// No run loop is active (the normal teardown, after Run returned):
+		// flush the events queued during destruction ourselves. When a loop IS
+		// running — ours or an external owner's — it drains them, and pumping
+		// nested from inside one of its callouts is exactly the kind of
+		// re-entrancy to avoid.
 		w.depleteRunLoopEventQueue()
 	}
 }
