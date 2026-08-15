@@ -769,7 +769,6 @@ func (w *webview) Run() {
 // closes — a nested, modal-style loop for a Run() issued from inside a run-loop
 // callout (e.g. a tray menu handler).
 func (w *webview) pumpUntilClosed() {
-	distantFuture := class("NSDate").Send(sel("distantFuture"))
 	for {
 		select {
 		case <-w.closed:
@@ -777,8 +776,15 @@ func (w *webview) pumpUntilClosed() {
 		default:
 		}
 		autorelease(func() {
+			// A short wait instead of distantFuture: the close can arrive from
+			// a plain goroutine (Terminate), and a nested pump cannot count on
+			// the main dispatch queue for a wake-up — when the pump itself runs
+			// inside a main-queue callout, libdispatch will not drain that
+			// queue again until the callout returns. Polling the channel every
+			// 50ms is boring and deterministic.
+			deadline := class("NSDate").Send(sel("dateWithTimeIntervalSinceNow:"), 0.05)
 			ev := w.app.Send(sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
-				nsEventMaskAny, distantFuture, nsstr("kCFRunLoopDefaultMode"), true)
+				nsEventMaskAny, deadline, nsstr("kCFRunLoopDefaultMode"), true)
 			if ev != 0 {
 				w.app.Send(sel("sendEvent:"), ev)
 			}
@@ -795,8 +801,10 @@ func (w *webview) pumpUntilClosed() {
 // the caller's Destroy closes the window.
 func (w *webview) Terminate() {
 	if w.app.Send(sel("isRunning")) != 0 && !glazeRunsLoop.Load() {
+		// Closing the channel is enough for both Run shapes: the channel wait
+		// returns at once, and the pump polls it (see pumpUntilClosed for why
+		// a queued wake-up could not be trusted here).
 		w.closeOnce.Do(func() { close(w.closed) })
-		dispatchMain(func() { autorelease(func() { postWakeEvent(w.app) }) })
 		return
 	}
 	dispatchMain(w.stopRunLoop)
@@ -1016,10 +1024,8 @@ func (w *webview) destroyOnUI() {
 		}
 		w.schemeHandlerObjs = nil
 	})
-	// Unblock a Run() waiting on this window, and wake a pumpUntilClosed
-	// parked in nextEventMatchingMask so it notices.
+	// Unblock a Run() waiting on this window (the pump polls the channel).
 	w.closeOnce.Do(func() { close(w.closed) })
-	autorelease(func() { postWakeEvent(w.app) })
 	if w.ownsWindow && !glazeRunsLoop.Load() && w.app.Send(sel("isRunning")) == 0 {
 		// No run loop is active (the normal teardown, after Run returned):
 		// flush the events queued during destruction ourselves. When a loop IS

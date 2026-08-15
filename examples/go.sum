@@ -2,6 +2,8 @@ github.com/crgimenes/devengine v0.0.10 h1:otTiVPkvrSCpQAGE2uUlj92t2/TolEpBqjERPs
 github.com/crgimenes/devengine v0.0.10/go.mod h1:TiRxSa/jANVKp5QkMJJCBpTVV4oPtm3ucHqi9U7HGxs=
 github.com/crgimenes/filo v0.0.16 h1:/AEn/R5k33UXRfby/ZpJxIVWO5lQAPgnGmxM7eSUG7E=
 github.com/crgimenes/filo v0.0.16/go.mod h1:kt2+3JJivo6/HWOJlphW7iIQdFoB3V5RnL+oBQcHN8w=
+github.com/crgimenes/native v0.1.7 h1:L2HddYZsTQhQRlNvNo+J9bElAeJJk9t8r1sryE00zTM=
+github.com/crgimenes/native v0.1.7/go.mod h1:zc2jhRIKpfoqaOIPgND5BX5ZM/hx4WWS6hNP02ppxi8=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/ebitengine/purego v0.10.2 h1:W809HbnvzAxgdm+aOvlSekrM16wGCdT/e76+9tS7gzE=

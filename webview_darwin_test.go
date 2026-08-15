@@ -548,9 +548,39 @@ func externalLoopScenario() string {
 			}()
 			select {
 			case s := <-done:
-				return s
+				if s != "external-loop-ok" {
+					return s
+				}
 			case <-time.After(15 * time.Second):
 				return "timeout: New or Run blocked under a running loop (issue #31)"
+			}
+
+			// Second shape: the whole lifecycle issued ON the UI thread from
+			// inside a run-loop callout — what a tray OnClick does when it
+			// calls glaze synchronously. Run must pump events instead of
+			// block-waiting, or it deadlocks the very loop that would deliver
+			// the close.
+			syncRes := make(chan string, 1)
+			dispatchMain(func() {
+				w, err := New(false)
+				if err != nil {
+					syncRes <- "sync new error: " + err.Error()
+					return
+				}
+				defer w.Destroy()
+				w.SetHtml("<html><body>issue 31, sync shape</body></html>")
+				go func() {
+					time.Sleep(300 * time.Millisecond)
+					w.Terminate()
+				}()
+				w.Run()
+				syncRes <- "external-loop-ok"
+			})
+			select {
+			case s := <-syncRes:
+				return s
+			case <-time.After(15 * time.Second):
+				return "timeout: sync (OnClick-shaped) lifecycle hung"
 			}
 		}()
 		if app.Send(sel("isRunning")) == 0 {

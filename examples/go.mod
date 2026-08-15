@@ -6,6 +6,7 @@ require (
 	github.com/crgimenes/devengine v0.0.10
 	github.com/crgimenes/filo v0.0.16
 	github.com/crgimenes/glaze v0.0.18
+	github.com/crgimenes/native v0.1.7
 )
 
 require (

@@ -367,6 +367,16 @@ menu.Set([]menu.Item{
 macOS (`NSMenu`) and Windows (Win32 menu bar) are implemented; Linux returns
 `ErrUnsupported`. See [examples/menu](examples/menu/).
 
+## System tray
+
+glaze has no tray of its own, but it cooperates with one: when another
+library's event loop is already running — such as
+[`native/tray`](https://github.com/crgimenes/native) — `New` detects it,
+builds the window on the UI thread, and `Run` returns when that window closes
+instead of trying to own the loop. A tray menu item can open a webview
+synchronously from its `OnClick`, and closing the window leaves the tray
+running. See [examples/tray](examples/tray/).
+
 ## Running the examples
 
 `examples/` is a separate Go module (it keeps the library's `go.mod`
