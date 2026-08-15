@@ -408,7 +408,7 @@ func (w *webview) serveScheme(scheme, url string) *SchemeResponse {
 	if h == nil {
 		return nil
 	}
-	return h(&SchemeRequest{URL: url})
+	return callSchemeHandler(h, &SchemeRequest{URL: url})
 }
 
 // registerSchemes wires each SchemeHandler onto the web view's WebKitWebContext

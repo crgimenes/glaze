@@ -3,6 +3,8 @@ package glaze
 import (
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -116,16 +118,44 @@ func TestResolveAppTransport(t *testing.T) {
 }
 
 func TestPrepareUnixSocketPath(t *testing.T) {
-	path, err := prepareUnixSocketPath("")
+	path, ownedDir, err := prepareUnixSocketPath("")
 	if err != nil {
 		t.Fatalf("prepareUnixSocketPath() unexpected error: %v", err)
 	}
 	if path == "" {
 		t.Fatal("prepareUnixSocketPath() returned empty path")
 	}
+	if ownedDir == "" {
+		t.Fatal("prepareUnixSocketPath() default path should come with its owned dir")
+	}
+	defer func() { _ = os.Remove(ownedDir) }()
 	_, statErr := os.Stat(path)
 	if !os.IsNotExist(statErr) {
 		t.Fatalf("expected socket path placeholder to not exist, stat err: %v", statErr)
+	}
+	// The dir holding the default socket must be private: it is what stands
+	// between the socket and other local users.
+	info, err := os.Stat(ownedDir)
+	if err != nil {
+		t.Fatalf("stat owned dir: %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("owned dir mode = %o, want 0700", info.Mode().Perm())
+	}
+}
+
+func TestPrepareUnixSocketPathCustomPathOwnsNoDir(t *testing.T) {
+	dir := t.TempDir()
+	want := filepath.Join(dir, "custom.sock")
+	path, ownedDir, err := prepareUnixSocketPath(want)
+	if err != nil {
+		t.Fatalf("prepareUnixSocketPath(custom) unexpected error: %v", err)
+	}
+	if path != want {
+		t.Fatalf("path = %q, want %q", path, want)
+	}
+	if ownedDir != "" {
+		t.Fatalf("ownedDir = %q, want empty for a caller-supplied path", ownedDir)
 	}
 }
 

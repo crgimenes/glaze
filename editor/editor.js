@@ -155,7 +155,10 @@ class GlazeEditor {
 	// ---- rendering ----------------------------------------------------------
 
 	esc(s) {
-		return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+		// Quotes too: escaped text lands inside double-quoted attributes (the
+		// error tooltip's title="..."), where a bare quote would end the
+		// attribute and let a hostile diagnostic inject markup.
+		return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 	}
 
 	span(txt, cls) {

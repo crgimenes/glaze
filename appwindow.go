@@ -9,6 +9,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
 )
@@ -247,21 +248,37 @@ func setupTCPTransport(addr string) (appTransportSetup, error) {
 }
 
 func setupUnixTransport(socketPath string) (appTransportSetup, error) {
-	path, err := prepareUnixSocketPath(socketPath)
+	path, ownedDir, err := prepareUnixSocketPath(socketPath)
 	if err != nil {
 		return appTransportSetup{}, err
+	}
+	cleanup := func() {
+		_ = removeUnixSocket(path)
+		if ownedDir != "" {
+			_ = os.Remove(ownedDir)
+		}
 	}
 
 	unixListener, err := net.Listen("unix", path)
 	if err != nil {
-		_ = removeUnixSocket(path)
+		cleanup()
 		return appTransportSetup{}, fmt.Errorf("webview: listen unix %s: %w", path, err)
+	}
+
+	// The backend socket carries the whole app protocol; keep it reachable by
+	// this user alone (the default path already sits in a 0700 directory, but
+	// the socket mode itself would otherwise follow the process umask).
+	err = os.Chmod(path, 0o600)
+	if err != nil {
+		_ = unixListener.Close()
+		cleanup()
+		return appTransportSetup{}, fmt.Errorf("webview: chmod unix socket %s: %w", path, err)
 	}
 
 	proxyListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		_ = unixListener.Close()
-		_ = removeUnixSocket(path)
+		cleanup()
 		return appTransportSetup{}, fmt.Errorf("webview: listen tcp gateway: %w", err)
 	}
 
@@ -280,7 +297,7 @@ func setupUnixTransport(socketPath string) (appTransportSetup, error) {
 		_ = proxyServer.Close()
 		_ = proxyListener.Close()
 		_ = unixListener.Close()
-		_ = removeUnixSocket(path)
+		cleanup()
 		return appTransportSetup{}, errors.New("webview: failed to read tcp gateway address")
 	}
 
@@ -296,35 +313,34 @@ func setupUnixTransport(socketPath string) (appTransportSetup, error) {
 		close: func() error {
 			_ = proxyServer.Close()
 			_ = proxyListener.Close()
-			return removeUnixSocket(path)
+			err := removeUnixSocket(path)
+			if ownedDir != "" {
+				_ = os.Remove(ownedDir)
+			}
+			return err
 		},
 	}, nil
 }
 
-func prepareUnixSocketPath(socketPath string) (string, error) {
-	path := socketPath
-	if path == "" {
-		tmpFile, err := os.CreateTemp("", "glaze-*.sock")
+// prepareUnixSocketPath returns the socket path to bind and, for the generated
+// default, the private directory created to hold it (empty for caller-supplied
+// paths). A dedicated 0700 directory closes the substitution window the old
+// create-close-remove-bind dance left open on a shared temp dir, and no longer
+// leaves the path world-visible between the unlink and the bind.
+func prepareUnixSocketPath(socketPath string) (path, ownedDir string, err error) {
+	if socketPath == "" {
+		dir, err := os.MkdirTemp("", "glaze-*") // 0700 by construction
 		if err != nil {
-			return "", fmt.Errorf("webview: create temp socket path: %w", err)
+			return "", "", fmt.Errorf("webview: create socket dir: %w", err)
 		}
-		path = tmpFile.Name()
-		err = tmpFile.Close()
-		if err != nil {
-			return "", fmt.Errorf("webview: close temp file: %w", err)
-		}
-		err = os.Remove(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("webview: remove temp file %s: %w", path, err)
-		}
-		return path, nil
+		return filepath.Join(dir, "app.sock"), dir, nil
 	}
 
-	err := removeUnixSocket(path)
+	err = removeUnixSocket(socketPath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return path, nil
+	return socketPath, "", nil
 }
 
 func removeUnixSocket(path string) error {

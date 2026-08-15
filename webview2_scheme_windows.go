@@ -51,6 +51,20 @@ type iWRRequest struct{ vtbl *iWRRequestVtbl }
 
 func asWRRequest(p uintptr) *iWRRequest { return (*iWRRequest)(ptr(p)) }
 
+// iUnknown is the prefix every COM interface starts with; releaseUnknown drops
+// one reference on any interface pointer, so acquired objects (request, stream,
+// response) do not leak — COM out-params and factories hand back AddRef'd
+// references the caller owns.
+type iUnknown struct{ vtbl *iUnknownVtbl }
+
+func releaseUnknown(p uintptr) {
+	if p == 0 {
+		return
+	}
+	u := (*iUnknown)(ptr(p))
+	purego.SyscallN(u.vtbl.Release, p)
+}
+
 func (i *iWRRequest) GetUri(out *uintptr) uintptr {
 	r, _, _ := purego.SyscallN(i.vtbl.GetUri, uintptr(unsafe.Pointer(i)), uintptr(unsafe.Pointer(out)))
 	return r
@@ -105,7 +119,7 @@ func (w *webview) serveScheme(scheme, requestURL string) *SchemeResponse {
 	if h == nil {
 		return nil
 	}
-	return h(&SchemeRequest{URL: requestURL})
+	return callSchemeHandler(h, &SchemeRequest{URL: requestURL})
 }
 
 // schemeForVHostURL returns the registered scheme whose vhost matches uri, or "".
@@ -127,6 +141,7 @@ func (w *webview) serveSchemeWindows(args uintptr) {
 	if int32(a.GetRequest(&reqPtr)) < 0 || reqPtr == 0 {
 		return
 	}
+	defer releaseUnknown(reqPtr)
 	var uriPtr uintptr
 	if int32(asWRRequest(reqPtr).GetUri(&uriPtr)) < 0 || uriPtr == 0 {
 		return
@@ -144,11 +159,20 @@ func (w *webview) serveSchemeWindows(args uintptr) {
 	}
 
 	stream := shCreateMemStream(resp.Body)
+	if stream == 0 {
+		return
+	}
+	// The response object retains the stream, and PutResponse's WebView2 side
+	// retains the response; the references acquired here are dropped once the
+	// handoff is done (deferred, LIFO), so served assets stop leaking COM
+	// objects.
+	defer releaseUnknown(stream)
 	headers := "Content-Type: " + schemeMIME(resp)
 	var respObj uintptr
 	if int32(asEnvironment(w.environment).CreateWebResourceResponse(stream, 200, utf16("OK"), utf16(headers), &respObj)) < 0 || respObj == 0 {
 		return
 	}
+	defer releaseUnknown(respObj)
 	a.PutResponse(respObj)
 }
 

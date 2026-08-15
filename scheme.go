@@ -65,3 +65,16 @@ func schemeMIME(r *SchemeResponse) string {
 	}
 	return "application/octet-stream"
 }
+
+// callSchemeHandler invokes h with panic containment: handlers run inside
+// native UI callbacks, where an unwound panic kills the process. A panicking
+// handler answers nil — the platform's "not found" — the same way a panicking
+// binding answers status -1 (see callAndMarshal).
+func callSchemeHandler(h SchemeHandler, req *SchemeRequest) (resp *SchemeResponse) {
+	defer func() {
+		if recover() != nil {
+			resp = nil
+		}
+	}()
+	return h(req)
+}

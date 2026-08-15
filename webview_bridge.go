@@ -44,6 +44,12 @@ func createInitScript(postFn string) string {
     };
     Webview_.prototype.onReply = function(id, status, result) {
       var promise = _promises[id];
+      // Settle-once: drop the entry so completed calls do not accumulate for
+      // the life of the page, and ignore unknown or duplicate replies.
+      delete _promises[id];
+      if (!promise) {
+        return;
+      }
       if (result !== undefined) {
         try {
           result = JSON.parse(result);
