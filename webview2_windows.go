@@ -257,6 +257,14 @@ func (i *iController) MoveFocus(reason uintptr) {
 	purego.SyscallN(i.vtbl.MoveFocus, uintptr(unsafe.Pointer(i)), reason)
 }
 
+// getBounds reads the controller's current bounds. Unlike putBounds (RECT by
+// value, arch-specific), the getter takes a RECT* out-param, so one signature
+// serves both arches. Used by the embed regression test to assert the bounds
+// follow the host window.
+func (i *iController) getBounds(r *rect) {
+	purego.SyscallN(i.vtbl.GetBounds, uintptr(unsafe.Pointer(i)), uintptr(unsafe.Pointer(r)))
+}
+
 // AddRef/Close/Release are the controller's IUnknown/lifetime methods.
 // (putBounds is arch-specific; see putbounds_amd64.go and putbounds_arm64.go.)
 func (i *iController) AddRef()  { purego.SyscallN(i.vtbl.AddRef, uintptr(unsafe.Pointer(i))) }

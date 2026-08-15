@@ -101,6 +101,41 @@ func winEmbedScenario() string {
 		return "new error: " + err.Error()
 	}
 	owns := w.(*webview).ownsWindow
+
+	// Issue #29: the embedded WebView must follow the host window. SetWindowPos
+	// SENDS WM_SIZE synchronously through the subclass chain, so right after it
+	// returns the controller bounds must match the new client rect — no message
+	// pump involved.
+	setWindowPos(host, 0, 0, 0, 500, 400, swpNoZOrder|swpNoActivate|swpNoMove)
+	var want, got rect
+	getClientRect(host, &want)
+	asController(w.(*webview).controller).getBounds(&got)
+	if got != want {
+		w.Destroy()
+		destroyWindow(host)
+		return fmt.Sprintf("bounds after host resize = %+v, want %+v (WM_SIZE not routed)", got, want)
+	}
+
+	// Dispatch in embed mode rides WM_APP through the same subclass. The
+	// closure is already queued before the pump starts, and sentinel messages
+	// keep GetMessage from blocking if it is ever NOT picked up (the old
+	// GWLP_USERDATA approach dropped it silently).
+	ran := false
+	w.Dispatch(func() { ran = true })
+	for range 8 {
+		postMessageW(host, wmApp+1, 0, 0)
+	}
+	var m msgStruct
+	for i := 0; i < 9 && !ran && getMessageW(&m, 0, 0, 0) > 0; i++ {
+		translateMessage(&m)
+		dispatchMessageW(&m)
+	}
+	if !ran {
+		w.Destroy()
+		destroyWindow(host)
+		return "Dispatch closure never ran in embed mode (WM_APP not routed)"
+	}
+
 	w.Destroy()
 	// A valid window still returns its style; a destroyed HWND returns 0.
 	alive := getWindowLongPtrW(host, gwlStyle) != 0
