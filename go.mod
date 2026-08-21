@@ -1,5 +1,5 @@
 module github.com/crgimenes/glaze
 
-go 1.26.5
+go 1.27
 
 require github.com/ebitengine/purego v0.10.2
