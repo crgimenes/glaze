@@ -103,7 +103,8 @@ func (bindMethodsService) GetUserByID(_ int) int { return 1 }
 
 func (bindMethodsService) Ping() {}
 
-//nolint:unused // present to verify BindMethods skips unexported methods
+//lint:ignore U1000 present to verify BindMethods skips unexported methods
+//nolint:unused // same reason; staticcheck reads lint:ignore, golangci-lint reads nolint
 func (bindMethodsService) hidden() {}
 
 func TestBindMethods(t *testing.T) {
