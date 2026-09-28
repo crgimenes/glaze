@@ -278,6 +278,7 @@ func (i *iCoreWebView2) GetSettings(out *uintptr) uintptr {
 func (i *iCoreWebView2) Navigate(url *uint16) {
 	purego.SyscallN(i.vtbl.Navigate, uintptr(unsafe.Pointer(i)), uintptr(unsafe.Pointer(url)))
 }
+func (i *iCoreWebView2) call(fn uintptr) { purego.SyscallN(fn, uintptr(unsafe.Pointer(i))) }
 func (i *iCoreWebView2) NavigateToString(html *uint16) {
 	purego.SyscallN(i.vtbl.NavigateToString, uintptr(unsafe.Pointer(i)), uintptr(unsafe.Pointer(html)))
 }
@@ -776,6 +777,20 @@ func (w *webview) Raise() {
 	// treated as an error.
 	setForegroundWin(w.window)
 }
+
+// history runs one of ICoreWebView2's no-argument navigation methods.
+func (w *webview) history(pick func(*iCoreWebView2) uintptr) {
+	if w.webview2 == 0 {
+		return
+	}
+	cw := asWebView2(w.webview2)
+	cw.call(pick(cw))
+}
+
+func (w *webview) GoBack()    { w.history(func(c *iCoreWebView2) uintptr { return c.vtbl.GoBack }) }
+func (w *webview) GoForward() { w.history(func(c *iCoreWebView2) uintptr { return c.vtbl.GoForward }) }
+func (w *webview) Reload()    { w.history(func(c *iCoreWebView2) uintptr { return c.vtbl.Reload }) }
+func (w *webview) Stop()      { w.history(func(c *iCoreWebView2) uintptr { return c.vtbl.Stop }) }
 
 func (w *webview) Navigate(url string) {
 	url = w.rewriteSchemeURL(url) // map a registered scheme:// to its https vhost

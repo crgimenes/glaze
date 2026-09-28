@@ -50,6 +50,7 @@ func TestMain(m *testing.M) {
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resNavigation.Store(navigationScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
+		resHistory.Store(historyScenario())
 	}
 	os.Exit(m.Run())
 }

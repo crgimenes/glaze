@@ -947,6 +947,20 @@ func (w *webview) SetSize(width, height int, hint Hint) {
 	w.isSizeSet = true
 }
 
+// send runs a no-argument WKWebView method on the main thread.
+func (w *webview) send(selector string) {
+	performOnMain(func() {
+		if w.webView != 0 {
+			w.webView.Send(sel(selector))
+		}
+	})
+}
+
+func (w *webview) GoBack()    { w.send("goBack") }
+func (w *webview) GoForward() { w.send("goForward") }
+func (w *webview) Reload()    { w.send("reload") }
+func (w *webview) Stop()      { w.send("stopLoading") }
+
 func (w *webview) Navigate(url string) {
 	if url == "" {
 		url = "about:blank"

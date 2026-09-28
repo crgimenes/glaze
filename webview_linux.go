@@ -89,6 +89,10 @@ var (
 	webkitSettingsSetEnableWriteConsoleToStdout   func(settings uintptr, enabled bool)
 	webkitSettingsSetEnableDeveloperExtras        func(settings uintptr, enabled bool)
 	webkitWebViewLoadURI                          func(webview uintptr, uri string)
+	webkitWebViewGoBack                           func(webview uintptr)
+	webkitWebViewGoForward                        func(webview uintptr)
+	webkitWebViewReload                           func(webview uintptr)
+	webkitWebViewStopLoading                      func(webview uintptr)
 	webkitWebViewLoadHTML                         func(webview uintptr, html string, baseURI uintptr)
 	webkitWebViewGetURI                           func(webview uintptr) uintptr
 	webkitUserContentManagerRegisterHandler       func(manager uintptr, name string)
@@ -238,6 +242,10 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitSettingsSetEnableWriteConsoleToStdout, webkit, "webkit_settings_set_enable_write_console_messages_to_stdout")
 		purego.RegisterLibFunc(&webkitSettingsSetEnableDeveloperExtras, webkit, "webkit_settings_set_enable_developer_extras")
 		purego.RegisterLibFunc(&webkitWebViewLoadURI, webkit, "webkit_web_view_load_uri")
+		purego.RegisterLibFunc(&webkitWebViewGoBack, webkit, "webkit_web_view_go_back")
+		purego.RegisterLibFunc(&webkitWebViewGoForward, webkit, "webkit_web_view_go_forward")
+		purego.RegisterLibFunc(&webkitWebViewReload, webkit, "webkit_web_view_reload")
+		purego.RegisterLibFunc(&webkitWebViewStopLoading, webkit, "webkit_web_view_stop_loading")
 		purego.RegisterLibFunc(&webkitWebViewLoadHTML, webkit, "webkit_web_view_load_html")
 		purego.RegisterLibFunc(&webkitWebViewGetURI, webkit, "webkit_web_view_get_uri")
 		purego.RegisterLibFunc(&webkitUserContentManagerAddScript, webkit, "webkit_user_content_manager_add_script")
@@ -806,6 +814,11 @@ func (w *webview) Navigate(url string) {
 	}
 	webkitWebViewLoadURI(w.webview, url)
 }
+
+func (w *webview) GoBack()    { webkitWebViewGoBack(w.webview) }
+func (w *webview) GoForward() { webkitWebViewGoForward(w.webview) }
+func (w *webview) Reload()    { webkitWebViewReload(w.webview) }
+func (w *webview) Stop()      { webkitWebViewStopLoading(w.webview) }
 
 func (w *webview) SetHtml(html string) {
 	webkitWebViewLoadHTML(w.webview, html, 0)

@@ -70,6 +70,14 @@ type WebView interface {
 	// w.Navigate("data:text/html;base64,PGgxPkhlbGxvPC9oMT4=")
 	Navigate(url string)
 
+	// GoBack, GoForward, Reload and Stop act on the page's history and load
+	// like the browser buttons of the same name; each is a no-op when there is
+	// nothing to do.
+	GoBack()
+	GoForward()
+	Reload()
+	Stop()
+
 	// SetHtml sets the webview HTML directly.
 	// Example: w.SetHtml("<h1>Hello</h1>")
 	SetHtml(html string)
