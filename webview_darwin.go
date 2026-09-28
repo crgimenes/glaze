@@ -232,10 +232,14 @@ func registerClasses() error {
 	// and is reported to OnNavigation.
 	ended := func(self, wv, nsErr objc.ID) {
 		w := lookupEngine(self)
-		if w != nil {
-			w.revealContent()
-			callNavigation(w.onNavigation, navigationEvent(wv, nsErr, w.provisionalURL))
+		if w == nil {
+			return
 		}
+		w.revealContent()
+		if nsErr != 0 && isCancelled(nsErr) {
+			return
+		}
+		callNavigation(w.onNavigation, navigationEvent(wv, nsErr, w.provisionalURL))
 	}
 	// While a navigation is provisional, wv.URL is its target; after a
 	// provisional failure it reverts to the previous page, so remember it now.
@@ -1229,7 +1233,8 @@ func navigationEvent(wv, nsErr objc.ID, provisionalURL string) NavigationEvent {
 		return NavigationEvent{Kind: NavigationFinished, URL: absoluteString(wv.Send(sel("URL")))}
 	}
 	ev := NavigationEvent{Kind: NavigationFailed,
-		Err: errors.New(cstr(nsErr.Send(sel("localizedDescription")).Send(sel("UTF8String"))))}
+		Err: errors.New(cstr(nsErr.Send(sel("localizedDescription")).Send(sel("UTF8String")))),
+		TLS: isTLSError(nsErr)}
 	info := nsErr.Send(sel("userInfo"))
 	ev.URL = absoluteString(info.Send(sel("objectForKey:"), nsstr("NSErrorFailingURLKey")))
 	if ev.URL == "" {
@@ -1246,4 +1251,24 @@ func absoluteString(nsurl objc.ID) string {
 		return ""
 	}
 	return cstr(nsurl.Send(sel("absoluteString")).Send(sel("UTF8String")))
+}
+
+func nsErrorCode(nsErr objc.ID) (string, int) {
+	return cstr(nsErr.Send(sel("domain")).Send(sel("UTF8String"))), objc.Send[int](nsErr, sel("code"))
+}
+
+// NSURLErrorSecureConnectionFailed (-1200) through
+// NSURLErrorClientCertificateRequired (-1206).
+func isTLSError(nsErr objc.ID) bool {
+	domain, code := nsErrorCode(nsErr)
+	return domain == "NSURLErrorDomain" && code <= -1200 && code >= -1206
+}
+
+// NSURLErrorCancelled (-999): another navigation replaced this one.
+// WebKitErrorFrameLoadInterruptedByPolicyChange (102): the response became a
+// download, or a policy decision stopped it.
+func isCancelled(nsErr objc.ID) bool {
+	domain, code := nsErrorCode(nsErr)
+	return domain == "NSURLErrorDomain" && code == -999 ||
+		domain == "WebKitErrorDomain" && code == 102
 }

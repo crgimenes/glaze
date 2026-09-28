@@ -103,6 +103,9 @@ var (
 	haveEvaluateJavascript          bool
 
 	jscValueToString func(value uintptr) uintptr
+
+	webkitNetworkErrorQuark func() uint32
+	webkitPolicyErrorQuark  func() uint32
 )
 
 // --- one-time init ---------------------------------------------------------
@@ -117,6 +120,7 @@ var (
 	windowDestroyFn  uintptr
 	loadChangedFn    uintptr
 	loadFailedFn     uintptr
+	loadTLSFailedFn  uintptr
 
 	// Library handles kept after ensureInit so other files (e.g. the file
 	// dialogs in dialog_linux.go) can lazily resolve extra symbols without
@@ -258,6 +262,8 @@ func ensureInit() error {
 		}
 
 		purego.RegisterLibFunc(&jscValueToString, jsc, "jsc_value_to_string")
+		purego.RegisterLibFunc(&webkitNetworkErrorQuark, webkit, "webkit_network_error_quark")
+		purego.RegisterLibFunc(&webkitPolicyErrorQuark, webkit, "webkit_policy_error_quark")
 
 		dispatchSourceFn = purego.NewCallback(func(data uintptr) uintptr {
 			dispatchMu.Lock()
@@ -286,9 +292,16 @@ func ensureInit() error {
 		loadFailedFn = purego.NewCallback(func(webview, event, failingURI, gerr, userData uintptr) uintptr {
 			w := lookupEngine(userData)
 			if w != nil {
-				w.onLoadFailed(cstr(failingURI), gErrorMessage(gerr))
+				w.onLoadFailed(cstr(failingURI), gerr)
 			}
 			return 0 // FALSE: let WebKit run its default handling
+		})
+		loadTLSFailedFn = purego.NewCallback(func(webview, failingURI, cert, flags, userData uintptr) uintptr {
+			w := lookupEngine(userData)
+			if w != nil {
+				w.tlsFailed = true
+			}
+			return 0 // FALSE: refuse the certificate; WebKit then emits load-failed
 		})
 		windowDestroyFn = purego.NewCallback(func(widget, userData uintptr) uintptr {
 			w := lookupEngine(userData)
@@ -411,6 +424,9 @@ type webview struct {
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
 	// so that navigation is reported once, as a failure.
 	loadFailed bool
+	// tlsFailed is set by load-failed-with-tls-errors, which precedes the
+	// load-failed it qualifies.
+	tlsFailed bool
 
 	stopRunLoop   bool
 	isWindowShown bool
@@ -650,6 +666,7 @@ func (w *webview) windowInit(window uintptr) error {
 	}
 	if w.onNavigation != nil {
 		gSignalConnectData(w.webview, "load-failed", loadFailedFn, w.id, 0, 0)
+		gSignalConnectData(w.webview, "load-failed-with-tls-errors", loadTLSFailedFn, w.id, 0, 0)
 	}
 
 	if w.noBridge {
@@ -957,21 +974,39 @@ func (w *webview) onLoadFinished() {
 	})
 }
 
-func (w *webview) onLoadFailed(uri, msg string) {
+func (w *webview) onLoadFailed(uri string, gerr uintptr) {
 	w.loadFailed = true
+	tls := w.tlsFailed
+	w.tlsFailed = false
+	domain, code, msg := readGError(gerr)
+	if isCancelled(domain, code) {
+		return
+	}
 	callNavigation(w.onNavigation, NavigationEvent{
 		Kind: NavigationFailed,
 		URL:  uri,
 		Err:  errors.New(msg),
+		TLS:  tls,
 	})
 }
 
-// gErrorMessage reads GError.message: struct { GQuark domain; gint code;
-// gchar *message; }, so the pointer sits at offset 8 on 32- and 64-bit alike.
-func gErrorMessage(gerr uintptr) string {
+// WEBKIT_NETWORK_ERROR_CANCELLED (302): another navigation replaced this one.
+// WEBKIT_POLICY_ERROR_FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE (102): the
+// response became a download, or a policy decision stopped it.
+func isCancelled(domain uint32, code int32) bool {
+	return domain == webkitNetworkErrorQuark() && code == 302 ||
+		domain == webkitPolicyErrorQuark() && code == 102
+}
+
+// readGError reads struct { GQuark domain; gint code; gchar *message; }: the
+// message pointer sits at offset 8 on 32- and 64-bit alike.
+func readGError(gerr uintptr) (uint32, int32, string) {
 	if gerr == 0 {
-		return "load failed"
+		return 0, 0, "load failed"
 	}
 	p := *(*unsafe.Pointer)(unsafe.Pointer(&gerr)) // #nosec G103 -- GError owned by WebKit for the signal's duration
-	return cstr(*(*uintptr)(unsafe.Add(p, 8)))     // #nosec G103 -- reads the message pointer field
+	domain := *(*uint32)(p)
+	code := *(*int32)(unsafe.Add(p, 4))        // #nosec G103 -- reads the code field
+	msg := cstr(*(*uintptr)(unsafe.Add(p, 8))) // #nosec G103 -- reads the message pointer field
+	return domain, code, msg
 }

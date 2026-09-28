@@ -4,6 +4,9 @@ package glaze
 
 import (
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,25 +15,50 @@ import (
 
 var resNavigation atomic.Value // string
 
-// navigationScenario loads a page that finishes, then one that fails
-// (connection refused on a port nothing listens on), and reports both events.
+// navigationScenario drives four navigations: one replaced while it waits for
+// the server (must not be reported), one that finishes, one refused (plain
+// failure) and one to a self-signed https server (TLS failure).
 func navigationScenario() string {
+	refused, err := closedPort()
+	if err != nil {
+		return "closed port: " + err.Error()
+	}
+	quit := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		select {
+		case <-quit:
+		case <-r.Context().Done():
+		}
+	}))
+	defer slow.Close()
+	defer close(quit)
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(rw, "must not load")
+	}))
+	defer tlsSrv.Close()
+
 	var w WebView
 	var got []string
 	onNav := func(ev NavigationEvent) {
-		switch ev.Kind {
-		case NavigationFinished:
-			got = append(got, "finished "+ev.URL)
-			w.Navigate("http://127.0.0.1:1/")
-		case NavigationFailed:
-			got = append(got, fmt.Sprintf("failed %s err=%v", ev.URL, ev.Err != nil && ev.Err.Error() != ""))
+		kind := "finished"
+		if ev.Kind == NavigationFailed {
+			kind = fmt.Sprintf("failed err=%v", ev.Err != nil && ev.Err.Error() != "")
+		}
+		url := strings.NewReplacer(tlsSrv.URL, "TLSSERVER", refused, "REFUSED").Replace(ev.URL)
+		got = append(got, fmt.Sprintf("%s %s tls=%v", kind, url, ev.TLS))
+		switch len(got) {
+		case 1:
+			w.Navigate(refused + "/")
+		case 2:
+			w.Navigate(tlsSrv.URL + "/")
+		default:
 			w.Terminate()
 		}
 	}
 	page := func(*SchemeRequest) *SchemeResponse {
 		return &SchemeResponse{Body: []byte("<html><body>ok</body></html>"), MIMEType: "text/html"}
 	}
-	w, err := NewWithOptions(Options{
+	w, err = NewWithOptions(Options{
 		NoBridge:       true,
 		OnNavigation:   onNav,
 		SchemeHandlers: map[string]SchemeHandler{"probe": page},
@@ -39,16 +67,35 @@ func navigationScenario() string {
 		return "new error: " + err.Error()
 	}
 	defer w.Destroy()
-	time.AfterFunc(15*time.Second, w.Terminate)
-	w.Navigate("probe://test/ok")
+	var timedOut atomic.Bool
+	time.AfterFunc(15*time.Second, func() { timedOut.Store(true); w.Terminate() })
+	w.Navigate(slow.URL + "/")
+	time.AfterFunc(500*time.Millisecond, func() { w.Dispatch(func() { w.Navigate("probe://test/ok") }) })
 	w.Run()
+	if timedOut.Load() {
+		got = append(got, "TIMEOUT")
+	}
 	return strings.Join(got, " | ")
+}
+
+// closedPort returns http://127.0.0.1:<port> for a port that was just free:
+// connecting is refused, on every WebKit, unlike a port WebKit blocks by policy.
+func closedPort() (string, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	addr := l.Addr().String()
+	err = l.Close()
+	return "http://" + addr, err
 }
 
 func TestOnNavigation(t *testing.T) {
 	got, _ := resNavigation.Load().(string)
 	requireGUI(t, got)
-	want := "finished probe://test/ok | failed http://127.0.0.1:1/ err=true"
+	want := "finished probe://test/ok tls=false" +
+		" | failed err=true REFUSED/ tls=false" +
+		" | failed err=true TLSSERVER/ tls=true"
 	if got != want {
 		t.Fatalf("OnNavigation events: got %q, want %q", got, want)
 	}
