@@ -294,7 +294,10 @@ func ensureInit() error {
 			if w != nil {
 				w.onLoadFailed(cstr(failingURI), gerr)
 			}
-			return 0 // FALSE: let WebKit run its default handling
+			// TRUE: handled. The default loads WebKitGTK's error page, which would
+			// report as a finished navigation and cancel any navigation the
+			// handler just started; macOS shows no error page either.
+			return 1
 		})
 		loadTLSFailedFn = purego.NewCallback(func(webview, failingURI, cert, flags, userData uintptr) uintptr {
 			w := lookupEngine(userData)
@@ -436,7 +439,6 @@ type webview struct {
 	bindings       map[string]func(id, req string) (any, error)
 	userScriptSrcs []string
 	schemeHandlers map[string]SchemeHandler
-	schemeCB       uintptr // retained purego trampoline
 }
 
 // serveScheme looks up the handler for a scheme and invokes it (nil if none).
@@ -496,6 +498,7 @@ func (w *webview) registerSchemes() error {
 		getSecurityManager       func(uintptr) uintptr
 		registerAsSecure         func(sm uintptr, scheme string)
 		requestGetURI            func(uintptr) uintptr
+		requestGetWebView        func(uintptr) uintptr
 		requestGetScheme         func(uintptr) uintptr
 		schemeRequestFinish      func(req, stream uintptr, streamLen int64, contentType string)
 		schemeRequestFinishError func(req, err uintptr)
@@ -510,6 +513,7 @@ func (w *webview) registerSchemes() error {
 	purego.RegisterLibFunc(&getSecurityManager, webkit, "webkit_web_context_get_security_manager")
 	purego.RegisterLibFunc(&registerAsSecure, webkit, "webkit_security_manager_register_uri_scheme_as_secure")
 	purego.RegisterLibFunc(&requestGetURI, webkit, "webkit_uri_scheme_request_get_uri")
+	purego.RegisterLibFunc(&requestGetWebView, webkit, "webkit_uri_scheme_request_get_web_view")
 	purego.RegisterLibFunc(&requestGetScheme, webkit, "webkit_uri_scheme_request_get_scheme")
 	purego.RegisterLibFunc(&schemeRequestFinish, webkit, "webkit_uri_scheme_request_finish")
 	purego.RegisterLibFunc(&schemeRequestFinishError, webkit, "webkit_uri_scheme_request_finish_error")
@@ -529,40 +533,70 @@ func (w *webview) registerSchemes() error {
 	}
 
 	// void (*WebKitURISchemeRequestCallback)(WebKitURISchemeRequest*, gpointer).
-	// user_data is the engine id, so this resolves back to the right webview.
-	w.schemeCB = purego.NewCallback(func(request uintptr, data uintptr) uintptr {
-		eng := lookupEngine(data)
-		if eng == nil {
+	// A scheme lives on the shared default WebKitWebContext and can be
+	// registered only once per process, so user_data cannot name the webview:
+	// the request's own web view does. Created once: purego callbacks are a
+	// fixed, never-freed pool.
+	schemeCBOnce.Do(func() {
+		schemeCB = purego.NewCallback(func(request uintptr, data uintptr) uintptr {
+			url := cstr(requestGetURI(request))
+			scheme := cstr(requestGetScheme(request))
+			var resp *SchemeResponse
+			eng := engineForWebView(requestGetWebView(request))
+			if eng != nil {
+				resp = eng.serveScheme(scheme, url)
+			}
+			if resp == nil {
+				// A nil response means "not found": finish with an error so the load
+				// fails, matching macOS (didFailWithError:) and Windows (default 404)
+				// instead of delivering a successful empty document.
+				const gIOErrorNotFound = 1 // G_IO_ERROR_NOT_FOUND
+				gerr := newErrorLiteral(ioErrorQuark(), gIOErrorNotFound, "resource not found")
+				schemeRequestFinishError(request, gerr)
+				freeError(gerr) // finish_error copies it; we own our reference
+				return 0
+			}
+			body, mime := resp.Body, schemeMIME(resp)
+			// Copy into glib-owned memory freed by g_free once the stream is done, so
+			// the bytes outlive this callback (the stream is read asynchronously).
+			var dataPtr unsafe.Pointer
+			if len(body) > 0 {
+				dataPtr = memdup(unsafe.Pointer(&body[0]), len(body)) // #nosec G103 -- copied into glib memory, freed by g_free
+			}
+			stream := memInputStreamNew(dataPtr, len(body), uintptr(gFreeAddr))
+			schemeRequestFinish(request, stream, int64(len(body)), mime)
+			gObjectUnref(stream)
 			return 0
-		}
-		url := cstr(requestGetURI(request))
-		scheme := cstr(requestGetScheme(request))
-		resp := eng.serveScheme(scheme, url)
-		if resp == nil {
-			// A nil response means "not found": finish with an error so the load
-			// fails, matching macOS (didFailWithError:) and Windows (default 404)
-			// instead of delivering a successful empty document.
-			const gIOErrorNotFound = 1 // G_IO_ERROR_NOT_FOUND
-			gerr := newErrorLiteral(ioErrorQuark(), gIOErrorNotFound, "resource not found")
-			schemeRequestFinishError(request, gerr)
-			freeError(gerr) // finish_error copies it; we own our reference
-			return 0
-		}
-		body, mime := resp.Body, schemeMIME(resp)
-		// Copy into glib-owned memory freed by g_free once the stream is done, so
-		// the bytes outlive this callback (the stream is read asynchronously).
-		var dataPtr unsafe.Pointer
-		if len(body) > 0 {
-			dataPtr = memdup(unsafe.Pointer(&body[0]), len(body)) // #nosec G103 -- copied into glib memory, freed by g_free
-		}
-		stream := memInputStreamNew(dataPtr, len(body), uintptr(gFreeAddr))
-		schemeRequestFinish(request, stream, int64(len(body)), mime)
-		gObjectUnref(stream)
-		return 0
+		})
 	})
 	for scheme := range w.schemeHandlers {
-		registerScheme(ctx, scheme, w.schemeCB, w.id, 0)
+		if schemesRegistered[scheme] {
+			continue
+		}
+		schemesRegistered[scheme] = true
+		registerScheme(ctx, scheme, schemeCB, 0, 0)
 		registerAsSecure(sm, scheme)
+	}
+	return nil
+}
+
+var (
+	schemeCBOnce sync.Once
+	schemeCB     uintptr
+	// schemesRegistered is touched only on the GTK thread.
+	schemesRegistered = map[string]bool{}
+)
+
+func engineForWebView(p uintptr) *webview {
+	if p == 0 {
+		return nil
+	}
+	regMu.Lock()
+	defer regMu.Unlock()
+	for _, w := range registry {
+		if w.webview == p {
+			return w
+		}
 	}
 	return nil
 }

@@ -55,6 +55,7 @@ func TestMain(m *testing.M) {
 		resNoBridge.Store(noBridgeScenario())
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resNavigation.Store(navigationScenario())
+		resSchemeReuse.Store(schemeReuseScenario())
 		// Last: this scenario runs its own [NSApp run] as the "external" host.
 		resExternalLoop.Store(externalLoopScenario())
 	}

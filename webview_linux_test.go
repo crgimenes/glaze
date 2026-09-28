@@ -49,6 +49,7 @@ func TestMain(m *testing.M) {
 		resNoBridge.Store(noBridgeScenario())
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resNavigation.Store(navigationScenario())
+		resSchemeReuse.Store(schemeReuseScenario())
 	}
 	os.Exit(m.Run())
 }

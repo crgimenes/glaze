@@ -298,8 +298,10 @@ panic in the handler is contained. For a failure that never reached the
 server, `URL` is the one that failed, not the page still on screen. `TLS`
 marks a failed secure connection (untrusted, expired or mismatched
 certificate); the engine refuses it, there is no way around it here. A
-navigation cancelled because another replaced it is not reported. macOS and
-Linux; never called on Windows.
+navigation cancelled because another replaced it is not reported. Setting
+`OnNavigation` means the app handles failures: on Linux, WebKitGTK's built-in
+error page is not loaded (macOS has none), so the previous page stays. macOS
+and Linux; never called on Windows.
 
 ### First click on an inactive window (macOS)
 
