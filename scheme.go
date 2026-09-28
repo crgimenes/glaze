@@ -67,6 +67,10 @@ type Options struct {
 	// finishes or fails, so the window shows its native background instead of
 	// flashing an empty white page. macOS and Linux; ignored on Windows.
 	HideUntilLoaded bool
+
+	// OnNavigation is called on the UI thread when a main-frame navigation
+	// finishes or fails. macOS and Linux; never called on Windows.
+	OnNavigation func(NavigationEvent)
 }
 
 // schemeMIME returns a response's MIME type or the octet-stream default.

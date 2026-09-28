@@ -116,6 +116,7 @@ var (
 	messageHandlerFn uintptr
 	windowDestroyFn  uintptr
 	loadChangedFn    uintptr
+	loadFailedFn     uintptr
 
 	// Library handles kept after ensureInit so other files (e.g. the file
 	// dialogs in dialog_linux.go) can lazily resolve extra symbols without
@@ -278,9 +279,16 @@ func ensureInit() error {
 		loadChangedFn = purego.NewCallback(func(webview, event, userData uintptr) uintptr {
 			w := lookupEngine(userData)
 			if w != nil && event == webkitLoadFinished {
-				w.revealContent()
+				w.onLoadFinished()
 			}
 			return 0
+		})
+		loadFailedFn = purego.NewCallback(func(webview, event, failingURI, gerr, userData uintptr) uintptr {
+			w := lookupEngine(userData)
+			if w != nil {
+				w.onLoadFailed(cstr(failingURI), gErrorMessage(gerr))
+			}
+			return 0 // FALSE: let WebKit run its default handling
 		})
 		windowDestroyFn = purego.NewCallback(func(widget, userData uintptr) uintptr {
 			w := lookupEngine(userData)
@@ -399,6 +407,10 @@ type webview struct {
 	noBridge   bool
 	// contentHidden is true while HideUntilLoaded holds the web view back.
 	contentHidden bool
+	onNavigation  func(NavigationEvent)
+	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
+	// so that navigation is reported once, as a failure.
+	loadFailed bool
 
 	stopRunLoop   bool
 	isWindowShown bool
@@ -587,6 +599,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		schemeHandlers: opts.SchemeHandlers,
 		noBridge:       opts.NoBridge,
 		contentHidden:  opts.HideUntilLoaded,
+		onNavigation:   opts.OnNavigation,
 	}
 	w.id = registerEngine(w)
 	err = w.windowInit(uintptr(opts.Window))
@@ -632,8 +645,11 @@ func (w *webview) windowInit(window uintptr) error {
 	w.webview = webkitWebViewNew()
 	gObjectRefSink(w.webview)
 	w.manager = webkitWebViewGetUserContentManager(w.webview)
-	if w.contentHidden {
+	if w.contentHidden || w.onNavigation != nil {
 		gSignalConnectData(w.webview, "load-changed", loadChangedFn, w.id, 0, 0)
+	}
+	if w.onNavigation != nil {
+		gSignalConnectData(w.webview, "load-failed", loadFailedFn, w.id, 0, 0)
 	}
 
 	if w.noBridge {
@@ -927,4 +943,35 @@ func (w *webview) revealContent() {
 		gtkWidgetShow(w.webview)
 	}
 	gtkWidgetGrabFocus(w.webview)
+}
+
+func (w *webview) onLoadFinished() {
+	w.revealContent()
+	if w.loadFailed {
+		w.loadFailed = false
+		return
+	}
+	callNavigation(w.onNavigation, NavigationEvent{
+		Kind: NavigationFinished,
+		URL:  cstr(webkitWebViewGetURI(w.webview)),
+	})
+}
+
+func (w *webview) onLoadFailed(uri, msg string) {
+	w.loadFailed = true
+	callNavigation(w.onNavigation, NavigationEvent{
+		Kind: NavigationFailed,
+		URL:  uri,
+		Err:  errors.New(msg),
+	})
+}
+
+// gErrorMessage reads GError.message: struct { GQuark domain; gint code;
+// gchar *message; }, so the pointer sits at offset 8 on 32- and 64-bit alike.
+func gErrorMessage(gerr uintptr) string {
+	if gerr == 0 {
+		return "load failed"
+	}
+	p := *(*unsafe.Pointer)(unsafe.Pointer(&gerr)) // #nosec G103 -- GError owned by WebKit for the signal's duration
+	return cstr(*(*uintptr)(unsafe.Add(p, 8)))     // #nosec G103 -- reads the message pointer field
 }

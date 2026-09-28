@@ -228,11 +228,13 @@ func registerClasses() error {
 		return fmt.Errorf("webview: ui delegate class: %w", err)
 	}
 
-	// Every way a navigation ends reveals a view held back by HideUntilLoaded.
-	reveal := func(self objc.ID) {
+	// Every way a navigation ends reveals a view held back by HideUntilLoaded
+	// and is reported to OnNavigation.
+	ended := func(self, wv, nsErr objc.ID) {
 		w := lookupEngine(self)
 		if w != nil {
 			w.revealContent()
+			callNavigation(w.onNavigation, navigationEvent(wv, nsErr))
 		}
 	}
 	navDelegateClass, err = objc.RegisterClass(
@@ -241,15 +243,15 @@ func registerClasses() error {
 		[]objc.MethodDef{
 			{
 				Cmd: sel("webView:didFinishNavigation:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { reveal(self) },
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { ended(self, wv, 0) },
 			},
 			{
 				Cmd: sel("webView:didFailNavigation:withError:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { reveal(self) },
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { ended(self, wv, err) },
 			},
 			{
 				Cmd: sel("webView:didFailProvisionalNavigation:withError:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { reveal(self) },
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { ended(self, wv, err) },
 			},
 		})
 	if err != nil {
@@ -493,6 +495,7 @@ type webview struct {
 	noBridge   bool
 	// contentHidden is true while HideUntilLoaded holds the web view back.
 	contentHidden bool
+	onNavigation  func(NavigationEvent)
 
 	isSizeSet bool
 
@@ -579,6 +582,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		firstMouse:     opts.AcceptsFirstMouse,
 		noBridge:       opts.NoBridge,
 		contentHidden:  opts.HideUntilLoaded,
+		onNavigation:   opts.OnNavigation,
 		bindings:       map[string]func(id, req string) (any, error){},
 		schemeHandlers: opts.SchemeHandlers,
 		closed:         make(chan struct{}),
@@ -699,11 +703,13 @@ func (w *webview) windowSettings(debug bool) {
 		w.uiDelegate = objc.ID(uiDelegateClass).Send(sel("new"))
 		w.webView.Send(sel("setUIDelegate:"), w.uiDelegate)
 
-		if w.contentHidden {
+		if w.contentHidden || w.onNavigation != nil {
 			// Weak reference too, same as the UI delegate.
 			w.navDelegate = objc.ID(navDelegateClass).Send(sel("new"))
 			registerInstance(w.navDelegate, w)
 			w.webView.Send(sel("setNavigationDelegate:"), w.navDelegate)
+		}
+		if w.contentHidden {
 			w.webView.Send(sel("setHidden:"), true)
 		}
 
@@ -1193,4 +1199,28 @@ func (w *webview) revealContent() {
 	w.webView.Send(sel("setHidden:"), false)
 	// A hidden view could not take first responder at birth.
 	w.window.Send(sel("makeFirstResponder:"), w.webView)
+}
+
+// navigationEvent builds the report for a navigation that ended on wv; nsErr
+// is the NSError of a failure, or 0. A provisional failure never committed,
+// so wv still holds the previous page: the URL comes from the error only.
+func navigationEvent(wv, nsErr objc.ID) NavigationEvent {
+	if nsErr == 0 {
+		return NavigationEvent{Kind: NavigationFinished, URL: absoluteString(wv.Send(sel("URL")))}
+	}
+	ev := NavigationEvent{Kind: NavigationFailed,
+		Err: errors.New(cstr(nsErr.Send(sel("localizedDescription")).Send(sel("UTF8String"))))}
+	info := nsErr.Send(sel("userInfo"))
+	ev.URL = absoluteString(info.Send(sel("objectForKey:"), nsstr("NSErrorFailingURLKey")))
+	if ev.URL == "" {
+		ev.URL = cstr(info.Send(sel("objectForKey:"), nsstr("NSErrorFailingURLStringKey")).Send(sel("UTF8String")))
+	}
+	return ev
+}
+
+func absoluteString(nsurl objc.ID) string {
+	if nsurl == 0 {
+		return ""
+	}
+	return cstr(nsurl.Send(sel("absoluteString")).Send(sel("UTF8String")))
 }

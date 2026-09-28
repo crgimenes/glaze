@@ -48,6 +48,7 @@ func TestMain(m *testing.M) {
 		resDialogCfg.Store(dialogConfigScenario())
 		resNoBridge.Store(noBridgeScenario())
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
+		resNavigation.Store(navigationScenario())
 	}
 	os.Exit(m.Run())
 }

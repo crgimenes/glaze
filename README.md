@@ -281,6 +281,23 @@ The web view stays hidden, and the window shows its native background, until
 the first navigation finishes or fails. Later navigations are not affected.
 macOS and Linux; ignored on Windows.
 
+### Knowing when a page loaded or failed
+
+```go
+w, err := glaze.NewWithOptions(glaze.Options{
+    OnNavigation: func(ev glaze.NavigationEvent) {
+        if ev.Kind == glaze.NavigationFailed {
+            log.Printf("%s: %v", ev.URL, ev.Err)
+        }
+    },
+})
+```
+
+Called on the UI thread when a main-frame navigation finishes or fails; a
+panic in the handler is contained. For a failure that never reached the
+server, `URL` is the one that failed, not the page still on screen. macOS and
+Linux; never called on Windows.
+
 ### First click on an inactive window (macOS)
 
 On macOS a click on a window that does not have focus is spent *activating* the
