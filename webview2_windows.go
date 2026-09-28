@@ -310,6 +310,9 @@ func (i *iSettings) PutAreDevToolsEnabled(v bool) {
 func (i *iSettings) PutIsStatusBarEnabled(v bool) {
 	purego.SyscallN(i.vtbl.PutIsStatusBarEnabled, uintptr(unsafe.Pointer(i)), boolToUintptr(v))
 }
+func (i *iSettings) PutIsWebMessageEnabled(v bool) {
+	purego.SyscallN(i.vtbl.PutIsWebMessageEnabled, uintptr(unsafe.Pointer(i)), boolToUintptr(v))
+}
 func (i *iMessageArgs) TryGetWebMessageAsString(out *uintptr) uintptr {
 	r, _, _ := purego.SyscallN(i.vtbl.TryGetWebMessageAsStr, uintptr(unsafe.Pointer(i)), uintptr(unsafe.Pointer(out)))
 	return r
@@ -434,8 +437,10 @@ func handlerInvoke(this, a, b uintptr) uintptr {
 			if wv != 0 {
 				cw := asWebView2(wv)
 				cw.AddRef()
-				var token uint64
-				cw.AddWebMessageReceived(handlerPtr(w.msgH), &token)
+				if !w.noBridge {
+					var token uint64
+					cw.AddWebMessageReceived(handlerPtr(w.msgH), &token)
+				}
 				// Custom-scheme serving: intercept the per-scheme https vhost and
 				// answer from the SchemeHandler (see serveSchemeWindows).
 				if len(w.schemeHandlers) > 0 {
@@ -723,9 +728,12 @@ func (w *webview) embed(debug bool) error {
 		s := asSettings(settings)
 		s.PutAreDevToolsEnabled(debug)
 		s.PutIsStatusBarEnabled(false)
+		s.PutIsWebMessageEnabled(!w.noBridge)
 	}
 
-	w.addUserScript(createInitScript(bridgePostFn))
+	if !w.noBridge {
+		w.addUserScript(createInitScript(bridgePostFn))
+	}
 
 	w.resizeWebView()
 	asController(w.controller).PutIsVisible(true)
@@ -872,6 +880,9 @@ func (w *webview) bindingNamesLocked() []string {
 }
 
 func (w *webview) Bind(name string, f any) error {
+	if w.noBridge {
+		return ErrBridgeDisabled
+	}
 	wrapper, err := makeFuncWrapper(f)
 	if err != nil {
 		return err
@@ -893,6 +904,9 @@ func (w *webview) Bind(name string, f any) error {
 }
 
 func (w *webview) Unbind(name string) error {
+	if w.noBridge {
+		return ErrBridgeDisabled
+	}
 	w.mu.Lock()
 	_, exists := w.bindings[name]
 	if !exists {

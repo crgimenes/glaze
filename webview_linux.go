@@ -388,6 +388,7 @@ type webview struct {
 	webview    uintptr
 	manager    uintptr
 	ownsWindow bool
+	noBridge   bool
 
 	stopRunLoop   bool
 	isWindowShown bool
@@ -574,6 +575,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		ownsWindow:     true,
 		bindings:       map[string]func(id, req string) (any, error){},
 		schemeHandlers: opts.SchemeHandlers,
+		noBridge:       opts.NoBridge,
 	}
 	w.id = registerEngine(w)
 	err = w.windowInit(uintptr(opts.Window))
@@ -620,6 +622,9 @@ func (w *webview) windowInit(window uintptr) error {
 	gObjectRefSink(w.webview)
 	w.manager = webkitWebViewGetUserContentManager(w.webview)
 
+	if w.noBridge {
+		return nil
+	}
 	gSignalConnectData(w.manager, "script-message-received::__webview__",
 		messageHandlerFn, w.id, 0, 0)
 	registerScriptHandler(w.manager, "__webview__")
@@ -789,6 +794,9 @@ func (w *webview) Raise() {
 }
 
 func (w *webview) Bind(name string, f any) error {
+	if w.noBridge {
+		return ErrBridgeDisabled
+	}
 	wrapper, err := makeFuncWrapper(f)
 	if err != nil {
 		return err
@@ -807,6 +815,9 @@ func (w *webview) Bind(name string, f any) error {
 }
 
 func (w *webview) Unbind(name string) error {
+	if w.noBridge {
+		return ErrBridgeDisabled
+	}
 	w.mu.Lock()
 	_, exists := w.bindings[name]
 	if !exists {

@@ -53,6 +53,7 @@ func TestMain(m *testing.M) {
 		resWinRichTypes.Store(winRichTypesScenario())
 		resWinEmbed.Store(winEmbedScenario())
 		resWinDialogCfg.Store(winDialogConfigScenario())
+		resNoBridge.Store(noBridgeScenario())
 		resWinClose.Store(winCloseViaUIScenario()) // last: it ends with WM_QUIT
 	}
 	os.Exit(m.Run())

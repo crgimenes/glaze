@@ -461,9 +461,9 @@ type webview struct {
 	// firstMouse makes a click on an INACTIVE window reach the page instead of
 	// only bringing the window forward. See Options.AcceptsFirstMouse.
 	firstMouse bool
+	noBridge   bool
 
-	isSizeSet         bool
-	isInitScriptAdded bool
+	isSizeSet bool
 
 	// closed is closed when this window goes away (user close or Destroy);
 	// Run() waits on it instead of re-running NSApp when the run loop already
@@ -546,6 +546,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		ownsWindow:     true,
 		debug:          opts.Debug,
 		firstMouse:     opts.AcceptsFirstMouse,
+		noBridge:       opts.NoBridge,
 		bindings:       map[string]func(id, req string) (any, error){},
 		schemeHandlers: opts.SchemeHandlers,
 		closed:         make(chan struct{}),
@@ -559,7 +560,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		// window actually fronts instead of opening behind the current app.
 		w.Raise()
 	}
-	if w.ownsWindow && w.isInitScriptAdded {
+	if w.ownsWindow {
 		dispatchMain(func() {
 			if !w.isSizeSet {
 				w.SetSize(defaultWidth, defaultHeight, HintNone)
@@ -666,14 +667,14 @@ func (w *webview) windowSettings(debug bool) {
 		w.uiDelegate = objc.ID(uiDelegateClass).Send(sel("new"))
 		w.webView.Send(sel("setUIDelegate:"), w.uiDelegate)
 
-		handler := objc.ID(scriptHandlerClass).Send(sel("new"))
-		registerInstance(handler, w)
-		handler.Send(sel("autorelease"))
-		w.scriptHandler = handler // kept so Destroy can drop its registry entry
-		w.manager.Send(sel("addScriptMessageHandler:name:"), handler, nsstr("__webview__"))
-
-		w.pushUserScript(createInitScript(bridgePostFn))
-		w.isInitScriptAdded = true
+		if !w.noBridge {
+			handler := objc.ID(scriptHandlerClass).Send(sel("new"))
+			registerInstance(handler, w)
+			handler.Send(sel("autorelease"))
+			w.scriptHandler = handler // kept so Destroy can drop its registry entry
+			w.manager.Send(sel("addScriptMessageHandler:name:"), handler, nsstr("__webview__"))
+			w.pushUserScript(createInitScript(bridgePostFn))
+		}
 
 		widget := class("NSView").Send(sel("alloc")).Send(sel("initWithFrame:"), rect)
 		w.widget = widget.Send(sel("retain"))
@@ -922,6 +923,9 @@ func (w *webview) Eval(js string) {
 }
 
 func (w *webview) Bind(name string, f any) error {
+	if w.noBridge {
+		return ErrBridgeDisabled
+	}
 	wrapper, err := makeFuncWrapper(f)
 	if err != nil {
 		return err
@@ -949,6 +953,9 @@ func (w *webview) Bind(name string, f any) error {
 }
 
 func (w *webview) Unbind(name string) error {
+	if w.noBridge {
+		return ErrBridgeDisabled
+	}
 	var unbindErr error
 	performOnMain(func() {
 		w.mu.Lock()

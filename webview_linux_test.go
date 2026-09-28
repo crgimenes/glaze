@@ -46,6 +46,7 @@ func TestMain(m *testing.M) {
 		resRichTypes.Store(richTypesScenario())
 		resEmbed.Store(embedScenario())
 		resDialogCfg.Store(dialogConfigScenario())
+		resNoBridge.Store(noBridgeScenario())
 	}
 	os.Exit(m.Run())
 }

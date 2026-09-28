@@ -52,6 +52,7 @@ func TestMain(m *testing.M) {
 		resHitTest.Store(hitTestFirstMouseScenario())
 		resRaise.Store(raiseScenario())
 		resEditor.Store(editorScenario())
+		resNoBridge.Store(noBridgeScenario())
 		// Last: this scenario runs its own [NSApp run] as the "external" host.
 		resExternalLoop.Store(externalLoopScenario())
 	}

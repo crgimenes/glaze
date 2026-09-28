@@ -8,6 +8,10 @@ import (
 	"unsafe"
 )
 
+// ErrBridgeDisabled is returned by Bind and Unbind on a web view created with
+// Options.NoBridge.
+var ErrBridgeDisabled = errors.New("webview: bridge disabled (Options.NoBridge)")
+
 // Hints are used to configure window sizing and resizing.
 type Hint int
 

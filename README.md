@@ -253,6 +253,21 @@ and `Navigate` rewrites `<scheme>://…` to it -- so your handler and your
 `Navigate` URLs use the one `scheme://` form on every platform. See
 [examples/scheme](examples/scheme/).
 
+### Untrusted content: no bridge
+
+The JS↔Go bridge (`window.__webview__` plus a native message handler) is
+installed in every page the web view loads. That is right for an app serving
+its own HTML, and wrong for one that loads pages it does not control — a
+remote page would get a channel back to the process.
+
+```go
+w, err := glaze.NewWithOptions(glaze.Options{NoBridge: true})
+```
+
+With `NoBridge` nothing is injected and no handler is registered (on Windows,
+web messages are also disabled in the WebView2 settings). `Bind` and `Unbind`
+return `ErrBridgeDisabled`; `Init`, `Eval` and scheme handlers keep working.
+
 ### First click on an inactive window (macOS)
 
 On macOS a click on a window that does not have focus is spent *activating* the

@@ -412,6 +412,8 @@ type webview struct {
 	// guarded by mu.
 	schemeAuthority map[string]string
 
+	noBridge bool
+
 	// Window size constraints from SetSize(HintMin/HintMax); enforced in
 	// wndProc's WM_GETMINMAXINFO handler.
 	minWidth, minHeight int32
@@ -465,6 +467,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		dispatchMap:     map[uintptr]func(){},
 		schemeHandlers:  opts.SchemeHandlers,
 		schemeAuthority: map[string]string{},
+		noBridge:        opts.NoBridge,
 	}
 	window := opts.Window
 	debug := opts.Debug

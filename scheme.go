@@ -56,6 +56,12 @@ type Options struct {
 	// merely raises the window must NOT also press what happens to be under the
 	// cursor. Leave it off when a stray first click could destroy something.
 	AcceptsFirstMouse bool
+
+	// NoBridge leaves out the JS<->Go bridge: no window.__webview__ and no
+	// native message handler, so the page has no channel back to the process.
+	// Bind and Unbind then return ErrBridgeDisabled; Init and Eval still work.
+	// Use it when the web view loads content the app does not control.
+	NoBridge bool
 }
 
 // schemeMIME returns a response's MIME type or the octet-stream default.
