@@ -234,13 +234,29 @@ func registerClasses() error {
 		w := lookupEngine(self)
 		if w != nil {
 			w.revealContent()
-			callNavigation(w.onNavigation, navigationEvent(wv, nsErr))
+			callNavigation(w.onNavigation, navigationEvent(wv, nsErr, w.provisionalURL))
+		}
+	}
+	// While a navigation is provisional, wv.URL is its target; after a
+	// provisional failure it reverts to the previous page, so remember it now.
+	provisional := func(self, wv objc.ID) {
+		w := lookupEngine(self)
+		if w != nil {
+			w.provisionalURL = absoluteString(wv.Send(sel("URL")))
 		}
 	}
 	navDelegateClass, err = objc.RegisterClass(
 		"GlazeNavigationDelegate", objc.GetClass("NSObject"),
 		[]*objc.Protocol{objc.GetProtocol("WKNavigationDelegate")}, nil,
 		[]objc.MethodDef{
+			{
+				Cmd: sel("webView:didStartProvisionalNavigation:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv) },
+			},
+			{
+				Cmd: sel("webView:didReceiveServerRedirectForProvisionalNavigation:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv) },
+			},
 			{
 				Cmd: sel("webView:didFinishNavigation:"),
 				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { ended(self, wv, 0) },
@@ -496,6 +512,9 @@ type webview struct {
 	// contentHidden is true while HideUntilLoaded holds the web view back.
 	contentHidden bool
 	onNavigation  func(NavigationEvent)
+	// provisionalURL is the target of the navigation in flight, for errors
+	// that do not carry the failing URL.
+	provisionalURL string
 
 	isSizeSet bool
 
@@ -1203,8 +1222,9 @@ func (w *webview) revealContent() {
 
 // navigationEvent builds the report for a navigation that ended on wv; nsErr
 // is the NSError of a failure, or 0. A provisional failure never committed,
-// so wv still holds the previous page: the URL comes from the error only.
-func navigationEvent(wv, nsErr objc.ID) NavigationEvent {
+// so wv still holds the previous page: the URL comes from the error, else
+// from the provisional target (WebKit's own errors carry no failing URL).
+func navigationEvent(wv, nsErr objc.ID, provisionalURL string) NavigationEvent {
 	if nsErr == 0 {
 		return NavigationEvent{Kind: NavigationFinished, URL: absoluteString(wv.Send(sel("URL")))}
 	}
@@ -1214,6 +1234,9 @@ func navigationEvent(wv, nsErr objc.ID) NavigationEvent {
 	ev.URL = absoluteString(info.Send(sel("objectForKey:"), nsstr("NSErrorFailingURLKey")))
 	if ev.URL == "" {
 		ev.URL = cstr(info.Send(sel("objectForKey:"), nsstr("NSErrorFailingURLStringKey")).Send(sel("UTF8String")))
+	}
+	if ev.URL == "" {
+		ev.URL = provisionalURL
 	}
 	return ev
 }

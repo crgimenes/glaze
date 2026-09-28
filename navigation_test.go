@@ -50,6 +50,6 @@ func TestOnNavigation(t *testing.T) {
 	requireGUI(t, got)
 	want := "finished probe://test/ok | failed http://127.0.0.1:1/ err=true"
 	if got != want {
-		t.Fatalf("OnNavigation events:\n got %q\nwant %q", got, want)
+		t.Fatalf("OnNavigation events: got %q, want %q", got, want)
 	}
 }
