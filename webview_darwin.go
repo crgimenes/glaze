@@ -120,7 +120,7 @@ var (
 	dispatchWork   uintptr
 
 	appDelegateClass, scriptHandlerClass, windowDelegateClass, uiDelegateClass objc.Class
-	schemeHandlerClass, firstMouseViewClass                                    objc.Class
+	schemeHandlerClass, firstMouseViewClass, navDelegateClass                  objc.Class
 )
 
 // Init prepares the macOS backend: loads AppKit + WebKit and registers the
@@ -226,6 +226,34 @@ func registerClasses() error {
 		}})
 	if err != nil {
 		return fmt.Errorf("webview: ui delegate class: %w", err)
+	}
+
+	// Every way a navigation ends reveals a view held back by HideUntilLoaded.
+	reveal := func(self objc.ID) {
+		w := lookupEngine(self)
+		if w != nil {
+			w.revealContent()
+		}
+	}
+	navDelegateClass, err = objc.RegisterClass(
+		"GlazeNavigationDelegate", objc.GetClass("NSObject"),
+		[]*objc.Protocol{objc.GetProtocol("WKNavigationDelegate")}, nil,
+		[]objc.MethodDef{
+			{
+				Cmd: sel("webView:didFinishNavigation:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { reveal(self) },
+			},
+			{
+				Cmd: sel("webView:didFailNavigation:withError:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { reveal(self) },
+			},
+			{
+				Cmd: sel("webView:didFailProvisionalNavigation:withError:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { reveal(self) },
+			},
+		})
+	if err != nil {
+		return fmt.Errorf("webview: navigation delegate class: %w", err)
 	}
 
 	schemeHandlerClass, err = objc.RegisterClass(
@@ -450,6 +478,7 @@ type webview struct {
 	appDelegate    objc.ID
 	windowDelegate objc.ID
 	uiDelegate     objc.ID
+	navDelegate    objc.ID
 	window         objc.ID
 	widget         objc.ID
 	webView        objc.ID
@@ -462,6 +491,8 @@ type webview struct {
 	// only bringing the window forward. See Options.AcceptsFirstMouse.
 	firstMouse bool
 	noBridge   bool
+	// contentHidden is true while HideUntilLoaded holds the web view back.
+	contentHidden bool
 
 	isSizeSet bool
 
@@ -547,6 +578,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		debug:          opts.Debug,
 		firstMouse:     opts.AcceptsFirstMouse,
 		noBridge:       opts.NoBridge,
+		contentHidden:  opts.HideUntilLoaded,
 		bindings:       map[string]func(id, req string) (any, error){},
 		schemeHandlers: opts.SchemeHandlers,
 		closed:         make(chan struct{}),
@@ -666,6 +698,14 @@ func (w *webview) windowSettings(debug bool) {
 		// UIDelegate is a weak reference; keep our own strong ref in w.uiDelegate.
 		w.uiDelegate = objc.ID(uiDelegateClass).Send(sel("new"))
 		w.webView.Send(sel("setUIDelegate:"), w.uiDelegate)
+
+		if w.contentHidden {
+			// Weak reference too, same as the UI delegate.
+			w.navDelegate = objc.ID(navDelegateClass).Send(sel("new"))
+			registerInstance(w.navDelegate, w)
+			w.webView.Send(sel("setNavigationDelegate:"), w.navDelegate)
+			w.webView.Send(sel("setHidden:"), true)
+		}
 
 		if !w.noBridge {
 			handler := objc.ID(scriptHandlerClass).Send(sel("new"))
@@ -985,11 +1025,7 @@ func (w *webview) destroyOnUI() {
 	autorelease(func() {
 		if w.window != 0 {
 			if w.webView != 0 {
-				if w.uiDelegate != 0 {
-					w.webView.Send(sel("setUIDelegate:"), objc.ID(0))
-					w.uiDelegate.Send(sel("release"))
-					w.uiDelegate = 0
-				}
+				w.releaseWebViewDelegates()
 				w.webView.Send(sel("release"))
 				w.webView = 0
 			}
@@ -1129,4 +1165,32 @@ func (w *webview) resolve(id string, status int, resultJSON string) {
 	js := fmt.Sprintf("window.__webview__.onReply(%s, %d, %s)",
 		marshalJSON(id), status, marshalJSON(resultJSON))
 	dispatchMain(func() { autorelease(func() { w.Eval(js) }) })
+}
+
+// releaseWebViewDelegates detaches and releases the delegates WKWebView holds
+// only weakly (the strong references live on w).
+func (w *webview) releaseWebViewDelegates() {
+	if w.navDelegate != 0 {
+		w.webView.Send(sel("setNavigationDelegate:"), objc.ID(0))
+		unregisterInstance(w.navDelegate)
+		w.navDelegate.Send(sel("release"))
+		w.navDelegate = 0
+	}
+	if w.uiDelegate != 0 {
+		w.webView.Send(sel("setUIDelegate:"), objc.ID(0))
+		w.uiDelegate.Send(sel("release"))
+		w.uiDelegate = 0
+	}
+}
+
+// revealContent shows a web view held back by HideUntilLoaded, once. It runs
+// from navigation delegate callbacks, so already on the main thread.
+func (w *webview) revealContent() {
+	if !w.contentHidden || w.webView == 0 {
+		return
+	}
+	w.contentHidden = false
+	w.webView.Send(sel("setHidden:"), false)
+	// A hidden view could not take first responder at birth.
+	w.window.Send(sel("makeFirstResponder:"), w.webView)
 }

@@ -268,6 +268,19 @@ With `NoBridge` nothing is injected and no handler is registered (on Windows,
 web messages are also disabled in the WebView2 settings). `Bind` and `Unbind`
 return `ErrBridgeDisabled`; `Init`, `Eval` and scheme handlers keep working.
 
+### No white flash while the first page loads
+
+An empty web view paints white. In a dark room, with a dark desktop, that is a
+flash in the user's face every time a window opens.
+
+```go
+w, err := glaze.NewWithOptions(glaze.Options{HideUntilLoaded: true})
+```
+
+The web view stays hidden, and the window shows its native background, until
+the first navigation finishes or fails. Later navigations are not affected.
+macOS and Linux; ignored on Windows.
+
 ### First click on an inactive window (macOS)
 
 On macOS a click on a window that does not have focus is spent *activating* the

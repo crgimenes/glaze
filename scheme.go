@@ -62,6 +62,11 @@ type Options struct {
 	// Bind and Unbind then return ErrBridgeDisabled; Init and Eval still work.
 	// Use it when the web view loads content the app does not control.
 	NoBridge bool
+
+	// HideUntilLoaded keeps the web view hidden until the first navigation
+	// finishes or fails, so the window shows its native background instead of
+	// flashing an empty white page. macOS and Linux; ignored on Windows.
+	HideUntilLoaded bool
 }
 
 // schemeMIME returns a response's MIME type or the octet-stream default.

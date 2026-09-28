@@ -115,6 +115,7 @@ var (
 	dispatchSourceFn uintptr
 	messageHandlerFn uintptr
 	windowDestroyFn  uintptr
+	loadChangedFn    uintptr
 
 	// Library handles kept after ensureInit so other files (e.g. the file
 	// dialogs in dialog_linux.go) can lazily resolve extra symbols without
@@ -274,6 +275,13 @@ func ensureInit() error {
 			}
 			return 0
 		})
+		loadChangedFn = purego.NewCallback(func(webview, event, userData uintptr) uintptr {
+			w := lookupEngine(userData)
+			if w != nil && event == webkitLoadFinished {
+				w.revealContent()
+			}
+			return 0
+		})
 		windowDestroyFn = purego.NewCallback(func(widget, userData uintptr) uintptr {
 			w := lookupEngine(userData)
 			if w != nil {
@@ -389,6 +397,8 @@ type webview struct {
 	manager    uintptr
 	ownsWindow bool
 	noBridge   bool
+	// contentHidden is true while HideUntilLoaded holds the web view back.
+	contentHidden bool
 
 	stopRunLoop   bool
 	isWindowShown bool
@@ -576,6 +586,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		bindings:       map[string]func(id, req string) (any, error){},
 		schemeHandlers: opts.SchemeHandlers,
 		noBridge:       opts.NoBridge,
+		contentHidden:  opts.HideUntilLoaded,
 	}
 	w.id = registerEngine(w)
 	err = w.windowInit(uintptr(opts.Window))
@@ -621,6 +632,9 @@ func (w *webview) windowInit(window uintptr) error {
 	w.webview = webkitWebViewNew()
 	gObjectRefSink(w.webview)
 	w.manager = webkitWebViewGetUserContentManager(w.webview)
+	if w.contentHidden {
+		gSignalConnectData(w.webview, "load-changed", loadChangedFn, w.id, 0, 0)
+	}
 
 	if w.noBridge {
 		return nil
@@ -756,10 +770,12 @@ func (w *webview) windowShow() {
 	}
 	if gtk4 {
 		gtkWindowSetChild(w.window, w.webview)
-		gtkWidgetSetVisible(w.webview, true)
+		gtkWidgetSetVisible(w.webview, !w.contentHidden)
 	} else {
 		gtkContainerAdd(w.window, w.webview)
-		gtkWidgetShow(w.webview)
+		if !w.contentHidden {
+			gtkWidgetShow(w.webview)
+		}
 	}
 	if w.ownsWindow {
 		gtkWidgetGrabFocus(w.webview)
@@ -889,4 +905,26 @@ func (w *webview) resolve(id string, status int, resultJSON string) {
 	js := fmt.Sprintf("window.__webview__.onReply(%s, %d, %s)",
 		marshalJSON(id), status, marshalJSON(resultJSON))
 	dispatchMain(func() { w.Eval(js) })
+}
+
+// WEBKIT_LOAD_FINISHED; WebKitGTK also emits it after load-failed, so it
+// covers every way a navigation ends.
+const webkitLoadFinished = 3
+
+// revealContent shows a web view held back by HideUntilLoaded, once. It runs
+// from the load-changed signal, so already on the GTK thread.
+func (w *webview) revealContent() {
+	if !w.contentHidden || w.webview == 0 {
+		return
+	}
+	w.contentHidden = false
+	if !w.isWindowShown {
+		return // windowShow will show it with the right visibility
+	}
+	if gtk4 {
+		gtkWidgetSetVisible(w.webview, true)
+	} else {
+		gtkWidgetShow(w.webview)
+	}
+	gtkWidgetGrabFocus(w.webview)
 }
