@@ -69,6 +69,7 @@ func (s *bindMethodsWebViewStub) GoForward()                    {}
 func (s *bindMethodsWebViewStub) Reload()                       {}
 func (s *bindMethodsWebViewStub) Stop()                         {}
 func (s *bindMethodsWebViewStub) Find(string, bool, func(bool)) {}
+func (s *bindMethodsWebViewStub) SetZoom(float64)               {}
 
 func (s *bindMethodsWebViewStub) SetHtml(_ string) {}
 

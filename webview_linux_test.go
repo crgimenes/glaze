@@ -57,6 +57,7 @@ func TestMain(m *testing.M) {
 		resHistory.Store(historyScenario())
 		resNewWindow.Store(newWindowScenario())
 		resFind.Store(findScenario())
+		resZoom.Store(zoomScenario())
 		resClipboard.Store(clipboardScenario())
 	}
 	os.Exit(m.Run())

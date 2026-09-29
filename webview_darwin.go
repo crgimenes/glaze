@@ -997,6 +997,14 @@ func (w *webview) Find(text string, backwards bool, done func(bool)) {
 	})
 }
 
+func (w *webview) SetZoom(factor float64) {
+	performOnMain(func() {
+		if w.webView != 0 {
+			w.webView.Send(sel("setPageZoom:"), factor)
+		}
+	})
+}
+
 func (w *webview) GoBack()    { w.send("goBack") }
 func (w *webview) GoForward() { w.send("goForward") }
 func (w *webview) Reload()    { w.send("reload") }

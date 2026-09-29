@@ -787,6 +787,10 @@ func (w *webview) history(pick func(*iCoreWebView2) uintptr) {
 	cw.call(pick(cw))
 }
 
+// SetZoom: the controller's ZoomFactor takes a double, which SyscallN cannot
+// pass in the floating-point register the Windows x64 ABI wants.
+func (w *webview) SetZoom(float64) {}
+
 // Find: WebView2's find API needs a newer runtime interface than glaze binds.
 func (w *webview) Find(_ string, _ bool, done func(bool)) {
 	if done != nil {

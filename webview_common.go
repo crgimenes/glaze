@@ -86,6 +86,10 @@ type WebView interface {
 	// them. A no-op on Windows (done gets false).
 	Find(text string, backwards bool, done func(found bool))
 
+	// SetZoom scales the page, text and images alike: 1 is 100%. The factor
+	// stays with the web view across navigations. A no-op on Windows.
+	SetZoom(factor float64)
+
 	// SetHtml sets the webview HTML directly.
 	// Example: w.SetHtml("<h1>Hello</h1>")
 	SetHtml(html string)

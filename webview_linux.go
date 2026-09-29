@@ -91,6 +91,7 @@ var (
 	webkitSettingsSetEnableDeveloperExtras        func(settings uintptr, enabled bool)
 	webkitWebViewLoadURI                          func(webview uintptr, uri string)
 	webkitWebViewGoBack                           func(webview uintptr)
+	webkitWebViewSetZoomLevel                     func(webview uintptr, level float64)
 	webkitWebViewGoForward                        func(webview uintptr)
 	webkitWebViewReload                           func(webview uintptr)
 	webkitWebViewStopLoading                      func(webview uintptr)
@@ -256,6 +257,7 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitSettingsSetEnableDeveloperExtras, webkit, "webkit_settings_set_enable_developer_extras")
 		purego.RegisterLibFunc(&webkitWebViewLoadURI, webkit, "webkit_web_view_load_uri")
 		purego.RegisterLibFunc(&webkitWebViewGoBack, webkit, "webkit_web_view_go_back")
+		purego.RegisterLibFunc(&webkitWebViewSetZoomLevel, webkit, "webkit_web_view_set_zoom_level")
 		purego.RegisterLibFunc(&webkitWebViewGoForward, webkit, "webkit_web_view_go_forward")
 		purego.RegisterLibFunc(&webkitWebViewReload, webkit, "webkit_web_view_reload")
 		purego.RegisterLibFunc(&webkitWebViewStopLoading, webkit, "webkit_web_view_stop_loading")
@@ -926,6 +928,8 @@ func (w *webview) findEnded(found bool) {
 	w.findDone = nil
 	callFind(done, found)
 }
+
+func (w *webview) SetZoom(factor float64) { webkitWebViewSetZoomLevel(w.webview, factor) }
 
 func (w *webview) GoBack()    { webkitWebViewGoBack(w.webview) }
 func (w *webview) GoForward() { webkitWebViewGoForward(w.webview) }

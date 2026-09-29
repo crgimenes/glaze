@@ -59,6 +59,7 @@ func TestMain(m *testing.M) {
 		resHistory.Store(historyScenario())
 		resNewWindow.Store(newWindowScenario())
 		resFind.Store(findScenario())
+		resZoom.Store(zoomScenario())
 		// Last: this scenario runs its own [NSApp run] as the "external" host.
 		resExternalLoop.Store(externalLoopScenario())
 	}
