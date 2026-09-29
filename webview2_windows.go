@@ -787,6 +787,13 @@ func (w *webview) history(pick func(*iCoreWebView2) uintptr) {
 	cw.call(pick(cw))
 }
 
+// Find: WebView2's find API needs a newer runtime interface than glaze binds.
+func (w *webview) Find(_ string, _ bool, done func(bool)) {
+	if done != nil {
+		done(false)
+	}
+}
+
 func (w *webview) GoBack()    { w.history(func(c *iCoreWebView2) uintptr { return c.vtbl.GoBack }) }
 func (w *webview) GoForward() { w.history(func(c *iCoreWebView2) uintptr { return c.vtbl.GoForward }) }
 func (w *webview) Reload()    { w.history(func(c *iCoreWebView2) uintptr { return c.vtbl.Reload }) }

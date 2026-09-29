@@ -78,6 +78,14 @@ type WebView interface {
 	Reload()
 	Stop()
 
+	// Find selects and scrolls to the next match of text in the page, from
+	// the current selection, ignoring case and wrapping at the end; backwards
+	// searches up. done, when not nil, learns on the UI thread whether there
+	// was a match. Finding the same text again moves to the next match;
+	// empty text ends the search, clearing highlights where the engine draws
+	// them. A no-op on Windows (done gets false).
+	Find(text string, backwards bool, done func(found bool))
+
 	// SetHtml sets the webview HTML directly.
 	// Example: w.SetHtml("<h1>Hello</h1>")
 	SetHtml(html string)

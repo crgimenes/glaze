@@ -63,11 +63,12 @@ func (s *bindMethodsWebViewStub) SetTitle(_ string) {}
 
 func (s *bindMethodsWebViewStub) SetSize(_, _ int, _ Hint) {}
 
-func (s *bindMethodsWebViewStub) Navigate(_ string) {}
-func (s *bindMethodsWebViewStub) GoBack()           {}
-func (s *bindMethodsWebViewStub) GoForward()        {}
-func (s *bindMethodsWebViewStub) Reload()           {}
-func (s *bindMethodsWebViewStub) Stop()             {}
+func (s *bindMethodsWebViewStub) Navigate(_ string)             {}
+func (s *bindMethodsWebViewStub) GoBack()                       {}
+func (s *bindMethodsWebViewStub) GoForward()                    {}
+func (s *bindMethodsWebViewStub) Reload()                       {}
+func (s *bindMethodsWebViewStub) Stop()                         {}
+func (s *bindMethodsWebViewStub) Find(string, bool, func(bool)) {}
 
 func (s *bindMethodsWebViewStub) SetHtml(_ string) {}
 

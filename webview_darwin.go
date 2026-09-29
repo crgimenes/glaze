@@ -977,6 +977,26 @@ func (w *webview) send(selector string) {
 	})
 }
 
+func (w *webview) Find(text string, backwards bool, done func(bool)) {
+	performOnMain(func() {
+		if w.webView == 0 || text == "" {
+			callFind(done, false)
+			return
+		}
+		autorelease(func() {
+			cfg := class("WKFindConfiguration").Send(sel("new"))
+			cfg.Send(sel("autorelease"))
+			cfg.Send(sel("setBackwards:"), backwards)
+			// WebKit copies the block; this reference is released below.
+			block := objc.NewBlock(func(_ objc.Block, result objc.ID) {
+				callFind(done, objc.Send[bool](result, sel("matchFound")))
+			})
+			w.webView.Send(sel("findString:withConfiguration:completionHandler:"), nsstr(text), cfg, block)
+			block.Release()
+		})
+	})
+}
+
 func (w *webview) GoBack()    { w.send("goBack") }
 func (w *webview) GoForward() { w.send("goForward") }
 func (w *webview) Reload()    { w.send("reload") }

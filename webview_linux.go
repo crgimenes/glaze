@@ -110,6 +110,11 @@ var (
 	jscValueToString func(value uintptr) uintptr
 
 	webkitNavigationActionGetRequest func(action uintptr) uintptr
+	webkitWebViewGetFindController   func(webview uintptr) uintptr
+	webkitFindControllerSearch       func(fc uintptr, text string, options, maxMatches uint32)
+	webkitFindControllerSearchNext   func(fc uintptr)
+	webkitFindControllerSearchPrev   func(fc uintptr)
+	webkitFindControllerSearchFinish func(fc uintptr)
 	webkitURIRequestGetURI           func(request uintptr) uintptr
 
 	webkitNetworkErrorQuark func() uint32
@@ -130,6 +135,8 @@ var (
 	loadFailedFn     uintptr
 	loadTLSFailedFn  uintptr
 	createFn         uintptr
+	foundTextFn      uintptr
+	notFoundTextFn   uintptr
 
 	// Library handles kept after ensureInit so other files (e.g. the file
 	// dialogs in dialog_linux.go) can lazily resolve extra symbols without
@@ -278,69 +285,96 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&jscValueToString, jsc, "jsc_value_to_string")
 		purego.RegisterLibFunc(&webkitNetworkErrorQuark, webkit, "webkit_network_error_quark")
 		purego.RegisterLibFunc(&webkitNavigationActionGetRequest, webkit, "webkit_navigation_action_get_request")
+		purego.RegisterLibFunc(&webkitWebViewGetFindController, webkit, "webkit_web_view_get_find_controller")
+		purego.RegisterLibFunc(&webkitFindControllerSearch, webkit, "webkit_find_controller_search")
+		purego.RegisterLibFunc(&webkitFindControllerSearchNext, webkit, "webkit_find_controller_search_next")
+		purego.RegisterLibFunc(&webkitFindControllerSearchPrev, webkit, "webkit_find_controller_search_previous")
+		purego.RegisterLibFunc(&webkitFindControllerSearchFinish, webkit, "webkit_find_controller_search_finish")
 		purego.RegisterLibFunc(&webkitURIRequestGetURI, webkit, "webkit_uri_request_get_uri")
 		purego.RegisterLibFunc(&webkitPolicyErrorQuark, webkit, "webkit_policy_error_quark")
 
-		dispatchSourceFn = purego.NewCallback(func(data uintptr) uintptr {
-			dispatchMu.Lock()
-			f := dispatchMap[data]
-			delete(dispatchMap, data)
-			dispatchMu.Unlock()
-			if f != nil {
-				f()
-			}
-			return gSourceRemove
-		})
-		messageHandlerFn = purego.NewCallback(func(manager, jsResult, userData uintptr) uintptr {
-			w := lookupEngine(userData)
-			if w != nil {
-				w.onMessage(jsResultToString(jsResult))
-			}
-			return 0
-		})
-		loadChangedFn = purego.NewCallback(func(webview, event, userData uintptr) uintptr {
-			w := lookupEngine(userData)
-			if w != nil && event == webkitLoadFinished {
-				w.onLoadFinished()
-			}
-			return 0
-		})
-		loadFailedFn = purego.NewCallback(func(webview, event, failingURI, gerr, userData uintptr) uintptr {
-			w := lookupEngine(userData)
-			if w != nil {
-				w.onLoadFailed(cstr(failingURI), gerr)
-			}
-			// TRUE: handled. The default loads WebKitGTK's error page, which would
-			// report as a finished navigation and cancel any navigation the
-			// handler just started; macOS shows no error page either.
-			return 1
-		})
-		loadTLSFailedFn = purego.NewCallback(func(webview, failingURI, cert, flags, userData uintptr) uintptr {
-			w := lookupEngine(userData)
-			if w != nil {
-				w.tlsFailed = true
-			}
-			return 0 // FALSE: refuse the certificate; WebKit then emits load-failed
-		})
-		// GtkWidget* create(WebKitWebView*, WebKitNavigationAction*, gpointer):
-		// returning NULL creates no web view; the request goes to OnNewWindow.
-		createFn = purego.NewCallback(func(webview, action, userData uintptr) uintptr {
-			w := lookupEngine(userData)
-			if w != nil {
-				uri := cstr(webkitURIRequestGetURI(webkitNavigationActionGetRequest(action)))
-				callNewWindow(w.onNewWindow, uri)
-			}
-			return 0
-		})
-		windowDestroyFn = purego.NewCallback(func(widget, userData uintptr) uintptr {
-			w := lookupEngine(userData)
-			if w != nil {
-				w.onWindowDestroy()
-			}
-			return 0
-		})
+		newCallbacks()
 	})
 	return initErr
+}
+
+// newCallbacks creates the C-callable trampolines once: purego callbacks are
+// a fixed pool that is never freed.
+func newCallbacks() {
+	dispatchSourceFn = purego.NewCallback(func(data uintptr) uintptr {
+		dispatchMu.Lock()
+		f := dispatchMap[data]
+		delete(dispatchMap, data)
+		dispatchMu.Unlock()
+		if f != nil {
+			f()
+		}
+		return gSourceRemove
+	})
+	messageHandlerFn = purego.NewCallback(func(manager, jsResult, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w != nil {
+			w.onMessage(jsResultToString(jsResult))
+		}
+		return 0
+	})
+	loadChangedFn = purego.NewCallback(func(webview, event, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w != nil && event == webkitLoadFinished {
+			w.onLoadFinished()
+		}
+		return 0
+	})
+	loadFailedFn = purego.NewCallback(func(webview, event, failingURI, gerr, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w != nil {
+			w.onLoadFailed(cstr(failingURI), gerr)
+		}
+		// TRUE: handled. The default loads WebKitGTK's error page, which would
+		// report as a finished navigation and cancel any navigation the
+		// handler just started; macOS shows no error page either.
+		return 1
+	})
+	loadTLSFailedFn = purego.NewCallback(func(webview, failingURI, cert, flags, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w != nil {
+			w.tlsFailed = true
+		}
+		return 0 // FALSE: refuse the certificate; WebKit then emits load-failed
+	})
+	// GtkWidget* create(WebKitWebView*, WebKitNavigationAction*, gpointer):
+	// returning NULL creates no web view; the request goes to OnNewWindow.
+	createFn = purego.NewCallback(func(webview, action, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w != nil {
+			uri := cstr(webkitURIRequestGetURI(webkitNavigationActionGetRequest(action)))
+			callNewWindow(w.onNewWindow, uri)
+		}
+		return 0
+	})
+	// found-text(WebKitFindController*, guint match_count, gpointer) and
+	// failed-to-find-text(WebKitFindController*, gpointer).
+	foundTextFn = purego.NewCallback(func(fc, count, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w != nil {
+			w.findEnded(true)
+		}
+		return 0
+	})
+	notFoundTextFn = purego.NewCallback(func(fc, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w != nil {
+			w.findEnded(false)
+		}
+		return 0
+	})
+	windowDestroyFn = purego.NewCallback(func(widget, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w != nil {
+			w.onWindowDestroy()
+		}
+		return 0
+	})
 }
 
 // jsResultToString turns the script-message callback's second argument into a
@@ -457,6 +491,10 @@ type webview struct {
 	// tlsFailed is set by load-failed-with-tls-errors, which precedes the
 	// load-failed it qualifies.
 	tlsFailed bool
+
+	findController uintptr // connected on first Find
+	findText       string
+	findDone       func(bool)
 
 	stopRunLoop   bool
 	isWindowShown bool
@@ -842,6 +880,51 @@ func (w *webview) Navigate(url string) {
 		url = "about:blank"
 	}
 	webkitWebViewLoadURI(w.webview, url)
+}
+
+// WebKitFindOptions: CASE_INSENSITIVE | WRAP_AROUND, and BACKWARDS.
+const (
+	findOptions   = 1<<0 | 1<<4
+	findBackwards = 1 << 3
+	findMaxMatch  = 1000
+)
+
+func (w *webview) Find(text string, backwards bool, done func(bool)) {
+	if w.webview == 0 {
+		callFind(done, false)
+		return
+	}
+	if w.findController == 0 {
+		w.findController = webkitWebViewGetFindController(w.webview)
+		gSignalConnectData(w.findController, "found-text", foundTextFn, w.id, 0, 0)
+		gSignalConnectData(w.findController, "failed-to-find-text", notFoundTextFn, w.id, 0, 0)
+	}
+	if text == "" {
+		webkitFindControllerSearchFinish(w.findController)
+		w.findText = ""
+		callFind(done, false)
+		return
+	}
+	w.findDone = done
+	switch {
+	case text != w.findText:
+		w.findText = text
+		opts := uint32(findOptions)
+		if backwards {
+			opts |= findBackwards
+		}
+		webkitFindControllerSearch(w.findController, text, opts, findMaxMatch)
+	case backwards:
+		webkitFindControllerSearchPrev(w.findController)
+	default:
+		webkitFindControllerSearchNext(w.findController)
+	}
+}
+
+func (w *webview) findEnded(found bool) {
+	done := w.findDone
+	w.findDone = nil
+	callFind(done, found)
 }
 
 func (w *webview) GoBack()    { webkitWebViewGoBack(w.webview) }

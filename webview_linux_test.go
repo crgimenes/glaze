@@ -56,6 +56,7 @@ func TestMain(m *testing.M) {
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
 		resNewWindow.Store(newWindowScenario())
+		resFind.Store(findScenario())
 		resClipboard.Store(clipboardScenario())
 	}
 	os.Exit(m.Run())

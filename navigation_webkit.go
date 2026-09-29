@@ -21,3 +21,11 @@ func callNewWindow(f func(string), url string) {
 	defer func() { _ = recover() }()
 	f(url)
 }
+
+func callFind(f func(bool), found bool) {
+	if f == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	f(found)
+}
