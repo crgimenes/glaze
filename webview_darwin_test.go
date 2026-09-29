@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,6 +43,8 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	if !testing.Short() {
 		runtime.LockOSThread()
+		// First: the web view that starts the application owns its delegate.
+		resOpenURLs.Store(openURLsScenario())
 		resBridge.Store(bridgeScenario())
 		resErrorUnbind.Store(errorUnbindScenario())
 		resRichTypes.Store(richTypesScenario())
@@ -652,5 +655,45 @@ func TestFilePanelFromMainThread(t *testing.T) {
 	requireGUI(t, got)
 	if got != `returned "" err=<nil>` {
 		t.Fatalf("save panel from the main thread: %s", got)
+	}
+}
+
+var resOpenURLs atomic.Value // string
+
+// openURLsScenario hands the app delegate what the system sends when another
+// app opens links with this one: application:openURLs: with NSURLs.
+func openURLsScenario() string {
+	var got []string
+	v, err := NewWithOptions(Options{OnOpenURLs: func(urls []string) { got = urls }})
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	defer v.Destroy()
+	w := v.(*webview)
+	// The application's delegate, installed by this first web view.
+	delegate := w.app.Send(sel("delegate"))
+	if delegate == 0 {
+		return "no app delegate"
+	}
+	result := ""
+	w.Dispatch(func() {
+		autorelease(func() {
+			a := class("NSURL").Send(sel("URLWithString:"), nsstr("https://example.com/a"))
+			b := class("NSURL").Send(sel("URLWithString:"), nsstr("https://example.com/b?q=1"))
+			urls := class("NSArray").Send(sel("arrayWithObjects:count:"), unsafe.Pointer(&[2]objc.ID{a, b}), 2)
+			delegate.Send(sel("application:openURLs:"), w.app, urls)
+		})
+		result = strings.Join(got, " ")
+		w.Terminate()
+	})
+	w.Run()
+	return result
+}
+
+func TestOnOpenURLs(t *testing.T) {
+	got, _ := resOpenURLs.Load().(string)
+	requireGUI(t, got)
+	if want := "https://example.com/a https://example.com/b?q=1"; got != want {
+		t.Fatalf("OnOpenURLs: got %q, want %q", got, want)
 	}
 }

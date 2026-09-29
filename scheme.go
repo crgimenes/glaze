@@ -95,6 +95,18 @@ type Options struct {
 	// OnDownloadDone reports a download OnDownload accepted: saved at path,
 	// or failed with err.
 	OnDownloadDone func(path string, err error)
+
+	// OnOpenURLs receives the URLs the system asks the app to open: a link
+	// clicked in another app while this one is the chosen handler for its
+	// scheme (the app declares the scheme in its Info.plist). When the
+	// system launches the app to open a URL, the call comes while
+	// NewWithOptions is still starting the application, before it returns.
+	// It is an application event, not a window's: the handler of the last
+	// NewWithOptions that set one gets every URL. It reaches glaze only when
+	// glaze started the application (not under another run loop's owner).
+	// Called on the UI thread. macOS only: elsewhere the URL comes as a
+	// command-line argument.
+	OnOpenURLs func(urls []string)
 }
 
 // schemeMIME returns a response's MIME type or the octet-stream default.

@@ -175,6 +175,12 @@ func registerClasses() error {
 				Fn:  func(self objc.ID, _cmd objc.SEL, sender objc.ID) bool { return false },
 			},
 			{
+				Cmd: sel("application:openURLs:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, app, urls objc.ID) {
+					callOpenURLs(currentOpenURLs(), nsURLStrings(urls))
+				},
+			},
+			{
 				Cmd: sel("applicationDidFinishLaunching:"),
 				Fn: func(self objc.ID, _cmd objc.SEL, notification objc.ID) {
 					w := lookupEngine(self)
@@ -246,109 +252,9 @@ func registerClasses() error {
 		return fmt.Errorf("webview: ui delegate class: %w", err)
 	}
 
-	// Every way a navigation ends reveals a view held back by HideUntilLoaded
-	// and is reported to OnNavigation.
-	ended := func(self, wv, nsErr objc.ID) {
-		w := lookupEngine(self)
-		if w == nil {
-			return
-		}
-		w.revealContent()
-		if nsErr != 0 && isCancelled(nsErr) {
-			return
-		}
-		callNavigation(w.onNavigation, navigationEvent(wv, nsErr, w.provisionalURL))
-	}
-	// While a navigation is provisional, wv.URL is its target; after a
-	// provisional failure it reverts to the previous page, so remember it now.
-	provisional := func(self, wv objc.ID) {
-		w := lookupEngine(self)
-		if w != nil {
-			w.provisionalURL = absoluteString(wv.Send(sel("URL")))
-		}
-	}
-	navDelegateClass, err = objc.RegisterClass(
-		"GlazeNavigationDelegate", objc.GetClass("NSObject"),
-		[]*objc.Protocol{objc.GetProtocol("WKNavigationDelegate")}, nil,
-		[]objc.MethodDef{
-			{
-				Cmd: sel("webView:didStartProvisionalNavigation:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv) },
-			},
-			{
-				Cmd: sel("webView:didReceiveServerRedirectForProvisionalNavigation:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv) },
-			},
-			{
-				Cmd: sel("webView:decidePolicyForNavigationResponse:decisionHandler:"),
-				Fn: func(self objc.ID, _cmd objc.SEL, wv, response, handler objc.ID) {
-					policy := int64(wkPolicyAllow)
-					w := lookupEngine(self)
-					if w != nil && w.onDownload != nil && isDownloadResponse(response) {
-						policy = wkPolicyDownload
-					}
-					invokeNativeBlock(handler, "v@?q", unsafe.Pointer(&policy)) // #nosec G103 -- the arg's address, for NSInvocation
-				},
-			},
-			{
-				Cmd: sel("webView:decidePolicyForNavigationAction:decisionHandler:"),
-				Fn: func(self objc.ID, _cmd objc.SEL, wv, action, handler objc.ID) {
-					policy := int64(wkPolicyAllow)
-					w := lookupEngine(self)
-					if w != nil && w.onDownload != nil && isDownloadAction(action) {
-						policy = wkPolicyDownload
-					}
-					invokeNativeBlock(handler, "v@?q", unsafe.Pointer(&policy)) // #nosec G103 -- the arg's address, for NSInvocation
-				},
-			},
-			{
-				Cmd: sel("webView:navigationResponse:didBecomeDownload:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, response, download objc.ID) { adoptDownload(self, download) },
-			},
-			{
-				Cmd: sel("webView:navigationAction:didBecomeDownload:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, action, download objc.ID) { adoptDownload(self, download) },
-			},
-			{
-				Cmd: sel("webView:didFinishNavigation:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { ended(self, wv, 0) },
-			},
-			{
-				Cmd: sel("webView:didFailNavigation:withError:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { ended(self, wv, err) },
-			},
-			{
-				Cmd: sel("webView:didFailProvisionalNavigation:withError:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { ended(self, wv, err) },
-			},
-		})
+	err = registerNavigationClasses()
 	if err != nil {
-		return fmt.Errorf("webview: navigation delegate class: %w", err)
-	}
-
-	downloadDelegateClass, err = objc.RegisterClass(
-		"GlazeDownloadDelegate", objc.GetClass("NSObject"),
-		[]*objc.Protocol{objc.GetProtocol("WKDownloadDelegate")}, nil,
-		[]objc.MethodDef{
-			{
-				Cmd: sel("download:decideDestinationUsingResponse:suggestedFilename:completionHandler:"),
-				Fn:  decideDownloadDestination,
-			},
-			{
-				Cmd: sel("downloadDidFinish:"),
-				Fn: func(self objc.ID, _cmd objc.SEL, download objc.ID) {
-					downloadEnded(self, download, nil)
-				},
-			},
-			{
-				Cmd: sel("download:didFailWithError:resumeData:"),
-				Fn: func(self objc.ID, _cmd objc.SEL, download, nsErr, resume objc.ID) {
-					downloadEnded(self, download, errors.New(cstr(nsErr.Send(sel("localizedDescription")).Send(sel("UTF8String")))))
-				},
-			},
-		})
-	if err != nil {
-		return fmt.Errorf("webview: download delegate class: %w", err)
+		return err
 	}
 
 	schemeHandlerClass, err = objc.RegisterClass(
@@ -664,6 +570,8 @@ func NewWithOptions(opts Options) (WebView, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Before the bootstrap run: a launch to open a URL delivers it there.
+	setOpenURLs(opts.OnOpenURLs)
 
 	app := class("NSApplication").Send(sel("sharedApplication"))
 	loopRunning := app.Send(sel("isRunning")) != 0
@@ -1490,4 +1398,157 @@ func downloadEnded(self, download objc.ID, err error) {
 	}
 	delete(w.downloads, download)
 	callDownloadDone(w.onDownloadEnd, path, err)
+}
+
+func nsURLStrings(urls objc.ID) []string {
+	n := objc.Send[uint](urls, sel("count"))
+	out := make([]string, 0, n)
+	for i := range n {
+		out = append(out, absoluteString(urls.Send(sel("objectAtIndex:"), i)))
+	}
+	return out
+}
+
+// Opening URLs is an application event, not a window's: glaze installs its
+// app delegate once, with the first web view, and later web views have none of
+// their own. The handler therefore lives here; the last NewWithOptions that
+// passes one wins.
+var (
+	openURLsMu      sync.Mutex
+	openURLsHandler func([]string)
+)
+
+func setOpenURLs(f func([]string)) {
+	if f == nil {
+		return
+	}
+	openURLsMu.Lock()
+	openURLsHandler = f
+	openURLsMu.Unlock()
+}
+
+func currentOpenURLs() func([]string) {
+	openURLsMu.Lock()
+	defer openURLsMu.Unlock()
+	return openURLsHandler
+}
+
+// callOpenURLs runs the app's handler with panic containment, like
+// callNavigation.
+func callOpenURLs(f func([]string), urls []string) {
+	if f == nil || len(urls) == 0 {
+		return
+	}
+	defer func() { _ = recover() }()
+	f(urls)
+}
+
+// registerNavigationClasses registers the navigation and download delegates.
+func registerNavigationClasses() error {
+	var err error
+	// Every way a navigation ends reveals a view held back by HideUntilLoaded
+	// and is reported to OnNavigation.
+	ended := func(self, wv, nsErr objc.ID) {
+		w := lookupEngine(self)
+		if w == nil {
+			return
+		}
+		w.revealContent()
+		if nsErr != 0 && isCancelled(nsErr) {
+			return
+		}
+		callNavigation(w.onNavigation, navigationEvent(wv, nsErr, w.provisionalURL))
+	}
+	// While a navigation is provisional, wv.URL is its target; after a
+	// provisional failure it reverts to the previous page, so remember it now.
+	provisional := func(self, wv objc.ID) {
+		w := lookupEngine(self)
+		if w != nil {
+			w.provisionalURL = absoluteString(wv.Send(sel("URL")))
+		}
+	}
+	navDelegateClass, err = objc.RegisterClass(
+		"GlazeNavigationDelegate", objc.GetClass("NSObject"),
+		[]*objc.Protocol{objc.GetProtocol("WKNavigationDelegate")}, nil,
+		[]objc.MethodDef{
+			{
+				Cmd: sel("webView:didStartProvisionalNavigation:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv) },
+			},
+			{
+				Cmd: sel("webView:didReceiveServerRedirectForProvisionalNavigation:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv) },
+			},
+			{
+				Cmd: sel("webView:decidePolicyForNavigationResponse:decisionHandler:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, response, handler objc.ID) {
+					policy := int64(wkPolicyAllow)
+					w := lookupEngine(self)
+					if w != nil && w.onDownload != nil && isDownloadResponse(response) {
+						policy = wkPolicyDownload
+					}
+					invokeNativeBlock(handler, "v@?q", unsafe.Pointer(&policy)) // #nosec G103 -- the arg's address, for NSInvocation
+				},
+			},
+			{
+				Cmd: sel("webView:decidePolicyForNavigationAction:decisionHandler:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, action, handler objc.ID) {
+					policy := int64(wkPolicyAllow)
+					w := lookupEngine(self)
+					if w != nil && w.onDownload != nil && isDownloadAction(action) {
+						policy = wkPolicyDownload
+					}
+					invokeNativeBlock(handler, "v@?q", unsafe.Pointer(&policy)) // #nosec G103 -- the arg's address, for NSInvocation
+				},
+			},
+			{
+				Cmd: sel("webView:navigationResponse:didBecomeDownload:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, response, download objc.ID) { adoptDownload(self, download) },
+			},
+			{
+				Cmd: sel("webView:navigationAction:didBecomeDownload:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, action, download objc.ID) { adoptDownload(self, download) },
+			},
+			{
+				Cmd: sel("webView:didFinishNavigation:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { ended(self, wv, 0) },
+			},
+			{
+				Cmd: sel("webView:didFailNavigation:withError:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { ended(self, wv, err) },
+			},
+			{
+				Cmd: sel("webView:didFailProvisionalNavigation:withError:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { ended(self, wv, err) },
+			},
+		})
+	if err != nil {
+		return fmt.Errorf("webview: navigation delegate class: %w", err)
+	}
+
+	downloadDelegateClass, err = objc.RegisterClass(
+		"GlazeDownloadDelegate", objc.GetClass("NSObject"),
+		[]*objc.Protocol{objc.GetProtocol("WKDownloadDelegate")}, nil,
+		[]objc.MethodDef{
+			{
+				Cmd: sel("download:decideDestinationUsingResponse:suggestedFilename:completionHandler:"),
+				Fn:  decideDownloadDestination,
+			},
+			{
+				Cmd: sel("downloadDidFinish:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, download objc.ID) {
+					downloadEnded(self, download, nil)
+				},
+			},
+			{
+				Cmd: sel("download:didFailWithError:resumeData:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, download, nsErr, resume objc.ID) {
+					downloadEnded(self, download, errors.New(cstr(nsErr.Send(sel("localizedDescription")).Send(sel("UTF8String")))))
+				},
+			},
+		})
+	if err != nil {
+		return fmt.Errorf("webview: download delegate class: %w", err)
+	}
+	return nil
 }
