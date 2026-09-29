@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"syscall"
@@ -114,7 +115,12 @@ var (
 
 	webkitNavigationActionGetRequest func(action uintptr) uintptr
 	webkitWebViewGetFindController   func(webview uintptr) uintptr
-	webkitWebViewGetDownloadSource   func(webview uintptr) uintptr // context (4.x) or network session (6.0)
+	webkitWebViewGetSession          func(webview uintptr) uintptr // context (4.x) or network session (6.0)
+	webkitSessionGetDataManager      func(session uintptr) uintptr
+	webkitSessionGetCookieManager    func(session uintptr) uintptr
+	webkitDataManagerGetBaseDataDir  func(manager uintptr) uintptr
+	webkitDataManagerGetLocalStorage func(manager uintptr) uintptr // 4.x only; nil when absent
+	webkitCookieManagerSetPersistent func(cm uintptr, filename string, storage int)
 	webkitDownloadGetWebView         func(download uintptr) uintptr
 	webkitDownloadCancel             func(download uintptr)
 	webkitDownloadSetDestination     func(download uintptr, dest string)
@@ -812,6 +818,7 @@ func (w *webview) windowInit(window uintptr) error {
 		gSignalConnectData(w.webview, "create", createFn, w.id, 0, 0)
 	}
 	watchDownloads(w.webview)
+	persistCookies(w.webview)
 	if w.onNavigation != nil {
 		gSignalConnectData(w.webview, "load-failed", loadFailedFn, w.id, 0, 0)
 		gSignalConnectData(w.webview, "load-failed-with-tls-errors", loadTLSFailedFn, w.id, 0, 0)
@@ -1224,11 +1231,19 @@ func registerDownloadFuncs(webkit uintptr) {
 	purego.RegisterLibFunc(&webkitDownloadCancel, webkit, "webkit_download_cancel")
 	purego.RegisterLibFunc(&webkitDownloadSetDestination, webkit, "webkit_download_set_destination")
 	purego.RegisterLibFunc(&webkitDownloadSetAllowOverwrite, webkit, "webkit_download_set_allow_overwrite")
-	source := "webkit_web_view_get_context"
+	source, session := "webkit_web_view_get_context", "webkit_web_context"
 	if gtk4 {
-		source = "webkit_web_view_get_network_session"
+		source, session = "webkit_web_view_get_network_session", "webkit_network_session"
 	}
-	purego.RegisterLibFunc(&webkitWebViewGetDownloadSource, webkit, source)
+	purego.RegisterLibFunc(&webkitWebViewGetSession, webkit, source)
+	purego.RegisterLibFunc(&webkitSessionGetDataManager, webkit, session+"_get_website_data_manager")
+	purego.RegisterLibFunc(&webkitSessionGetCookieManager, webkit, session+"_get_cookie_manager")
+	purego.RegisterLibFunc(&webkitDataManagerGetBaseDataDir, webkit, "webkit_website_data_manager_get_base_data_directory")
+	purego.RegisterLibFunc(&webkitCookieManagerSetPersistent, webkit, "webkit_cookie_manager_set_persistent_storage")
+	addr, err := purego.Dlsym(webkit, "webkit_website_data_manager_get_local_storage_directory")
+	if err == nil && addr != 0 {
+		purego.RegisterFunc(&webkitDataManagerGetLocalStorage, addr)
+	}
 }
 
 type download struct {
@@ -1246,7 +1261,7 @@ func watchDownloads(webview uintptr) {
 		return
 	}
 	downloadsWatched = true
-	gSignalConnectData(webkitWebViewGetDownloadSource(webview), "download-started", downloadStartFn, 0, 0, 0)
+	gSignalConnectData(webkitWebViewGetSession(webview), "download-started", downloadStartFn, 0, 0, 0)
 }
 
 // downloadStarted cancels any download no OnDownload will place: WebKitGTK
@@ -1305,3 +1320,37 @@ func downloadFinished(dl uintptr) {
 }
 
 func onUIThread() bool { return uiThreadID != 0 && syscall.Gettid() == uiThreadID }
+
+// --- cookies -----------------------------------------------------------------
+
+const webkitCookiePersistentStorageSQLite = 1
+
+var cookiesPersisted bool
+
+// persistCookies keeps cookies on disk beside the rest of the website data
+// (local storage, cache) the engine already persists: WebKitGTK's cookie
+// manager is memory-only until told otherwise, so without this every run
+// starts logged out -- unlike macOS, where cookies persist by default. An
+// ephemeral session has no base directory and stays in memory.
+func persistCookies(webview uintptr) {
+	if cookiesPersisted {
+		return
+	}
+	cookiesPersisted = true
+	session := webkitWebViewGetSession(webview)
+	manager := webkitSessionGetDataManager(session)
+	base := cstr(webkitDataManagerGetBaseDataDir(manager))
+	// WebKitGTK 4.x's default manager has no base directory, only one per
+	// kind (~/.local/share/<program>/localstorage): use that one's parent.
+	if base == "" && webkitDataManagerGetLocalStorage != nil {
+		ls := cstr(webkitDataManagerGetLocalStorage(manager))
+		if ls != "" {
+			base = filepath.Dir(ls)
+		}
+	}
+	if base == "" {
+		return
+	}
+	webkitCookieManagerSetPersistent(webkitSessionGetCookieManager(session),
+		filepath.Join(base, "cookies.sqlite"), webkitCookiePersistentStorageSQLite)
+}

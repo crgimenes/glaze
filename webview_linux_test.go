@@ -63,6 +63,7 @@ func TestMain(m *testing.M) {
 		resZoom.Store(zoomScenario())
 		resDownload.Store(downloadScenario())
 		resNoDownloadHandler.Store(noDownloadHandlerScenario())
+		resCookies.Store(cookiesScenario())
 		resClipboard.Store(clipboardScenario())
 	}
 	os.Exit(m.Run())
@@ -366,6 +367,42 @@ func TestNoDownloadWithoutHandler(t *testing.T) {
 	got, _ := resNoDownloadHandler.Load().(string)
 	requireGUI(t, got)
 	if got != "saved without asking: []" {
+		t.Fatal(got)
+	}
+}
+
+var resCookies atomic.Value // string
+
+// cookiesScenario loads a page that sets a cookie and checks that the cookie
+// store is a file beside the rest of the website data, not memory only.
+func cookiesScenario() string {
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		http.SetCookie(rw, &http.Cookie{Name: "glaze", Value: "kept", MaxAge: 3600})
+		_, _ = fmt.Fprint(rw, "<html><body>cookie</body></html>")
+	}))
+	defer srv.Close()
+	v, err := NewWithOptions(Options{OnNavigation: func(NavigationEvent) {}})
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	w := v.(*webview)
+	manager := webkitSessionGetDataManager(webkitWebViewGetSession(w.webview))
+	base := cstr(webkitDataManagerGetBaseDataDir(manager))
+	if base == "" && webkitDataManagerGetLocalStorage != nil {
+		base = filepath.Dir(cstr(webkitDataManagerGetLocalStorage(manager)))
+	}
+	time.AfterFunc(3*time.Second, v.Terminate)
+	v.Navigate(srv.URL + "/")
+	v.Run()
+	v.Destroy()
+	_, err = os.Stat(filepath.Join(base, "cookies.sqlite"))
+	return fmt.Sprintf("cookies.sqlite in the data dir: %v", err == nil)
+}
+
+func TestCookiesPersist(t *testing.T) {
+	got, _ := resCookies.Load().(string)
+	requireGUI(t, got)
+	if got != "cookies.sqlite in the data dir: true" {
 		t.Fatal(got)
 	}
 }
