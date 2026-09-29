@@ -634,9 +634,11 @@ func panelOnMainScenario() string {
 	defer w.Destroy()
 	result := "panel never returned"
 	w.Dispatch(func() {
-		time.AfterFunc(time.Second, func() {
-			dispatchMain(func() { class("NSApplication").Send(sel("sharedApplication")).Send(sel("abortModal")) })
-		})
+		// The panel's modal loop runs only NSModalPanelRunLoopMode: a block on
+		// the main queue would wait for it to end. Schedule the abort there.
+		app := class("NSApplication").Send(sel("sharedApplication"))
+		modes := class("NSArray").Send(sel("arrayWithObject:"), nsstr("NSModalPanelRunLoopMode"))
+		app.Send(sel("performSelector:withObject:afterDelay:inModes:"), sel("abortModal"), objc.ID(0), 1.0, modes)
 		path, err := w.SaveFile(FileDialogOptions{Filename: "x.txt"})
 		result = fmt.Sprintf("returned %q err=%v", path, err)
 		w.Terminate()
