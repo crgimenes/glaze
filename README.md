@@ -414,8 +414,12 @@ menu.Set([]menu.Item{
 }, menu.Options{Window: w.Window()})
 ```
 
-macOS (`NSMenu`) and Windows (Win32 menu bar) are implemented; Linux returns
-`ErrUnsupported`. See [examples/menu](examples/menu/).
+macOS (`NSMenu`) and Windows (Win32 menu bar, shortcuts not wired) are
+implemented. Linux draws no menu bar, but the items' shortcuts work: a key
+handler on the window (capture phase, GTK3 or GTK4) runs the item and keeps the
+key from the page; `cmd` reads as `ctrl` there, and any other key reaches the
+page as usual. Selector items are skipped on Linux, where the focused widget
+already handles copy and paste. See [examples/menu](examples/menu/).
 
 ## System tray
 

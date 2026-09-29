@@ -17,8 +17,9 @@
 //	}, menu.Options{})
 //
 // Platform support: macOS (NSMenu) and Windows (a Win32 menu bar attached to the
-// caller's window) are implemented; Linux returns ErrUnsupported (the GTK3/GTK4
-// menu-bar story is too fragmented to do cheaply).
+// caller's window, without shortcuts). Linux draws no bar -- the GTK3/GTK4
+// menu-bar story is too fragmented to do cheaply -- but installs the items'
+// shortcuts on Options.Window, cmd read as ctrl.
 package menu
 
 import (
