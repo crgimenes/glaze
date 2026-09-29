@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"runtime"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -112,6 +114,11 @@ var (
 
 	webkitNavigationActionGetRequest func(action uintptr) uintptr
 	webkitWebViewGetFindController   func(webview uintptr) uintptr
+	webkitWebViewGetDownloadSource   func(webview uintptr) uintptr // context (4.x) or network session (6.0)
+	webkitDownloadGetWebView         func(download uintptr) uintptr
+	webkitDownloadCancel             func(download uintptr)
+	webkitDownloadSetDestination     func(download uintptr, dest string)
+	webkitDownloadSetAllowOverwrite  func(download uintptr, allowed bool)
 	webkitFindControllerSearch       func(fc uintptr, text string, options, maxMatches uint32)
 	webkitFindControllerSearchNext   func(fc uintptr)
 	webkitFindControllerSearchPrev   func(fc uintptr)
@@ -128,6 +135,7 @@ var (
 	initOnce     sync.Once
 	initErr      error
 	uiThreadOnce sync.Once
+	uiThreadID   int // the GTK thread, for onUIThread
 
 	dispatchSourceFn uintptr
 	messageHandlerFn uintptr
@@ -137,6 +145,10 @@ var (
 	loadTLSFailedFn  uintptr
 	createFn         uintptr
 	foundTextFn      uintptr
+	downloadStartFn  uintptr
+	downloadDestFn   uintptr
+	downloadFailFn   uintptr
+	downloadDoneFn   uintptr
 	notFoundTextFn   uintptr
 
 	// Library handles kept after ensureInit so other files (e.g. the file
@@ -288,6 +300,7 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitNetworkErrorQuark, webkit, "webkit_network_error_quark")
 		purego.RegisterLibFunc(&webkitNavigationActionGetRequest, webkit, "webkit_navigation_action_get_request")
 		purego.RegisterLibFunc(&webkitWebViewGetFindController, webkit, "webkit_web_view_get_find_controller")
+		registerDownloadFuncs(webkit)
 		purego.RegisterLibFunc(&webkitFindControllerSearch, webkit, "webkit_find_controller_search")
 		purego.RegisterLibFunc(&webkitFindControllerSearchNext, webkit, "webkit_find_controller_search_next")
 		purego.RegisterLibFunc(&webkitFindControllerSearchPrev, webkit, "webkit_find_controller_search_previous")
@@ -368,6 +381,25 @@ func newCallbacks() {
 		if w != nil {
 			w.findEnded(false)
 		}
+		return 0
+	})
+	// download-started(source, WebKitDownload*, gpointer)
+	downloadStartFn = purego.NewCallback(func(source, dl, userData uintptr) uintptr {
+		downloadStarted(dl)
+		return 0
+	})
+	// gboolean decide-destination(WebKitDownload*, gchar *suggested, gpointer)
+	downloadDestFn = purego.NewCallback(func(dl, suggested, userData uintptr) uintptr {
+		decideDestination(dl, cstr(suggested))
+		return 1 // handled: destination set, or the download cancelled
+	})
+	// failed(WebKitDownload*, GError*, gpointer); finished follows it.
+	downloadFailFn = purego.NewCallback(func(dl, gerr, userData uintptr) uintptr {
+		downloadFailed(dl, gerr)
+		return 0
+	})
+	downloadDoneFn = purego.NewCallback(func(dl, userData uintptr) uintptr {
+		downloadFinished(dl)
 		return 0
 	})
 	windowDestroyFn = purego.NewCallback(func(widget, userData uintptr) uintptr {
@@ -495,8 +527,12 @@ type webview struct {
 	tlsFailed bool
 
 	findController uintptr // connected on first Find
-	findText       string
-	findDone       func(bool)
+
+	onDownload    func(string) string
+	onDownloadEnd func(string, error)
+	downloads     map[uintptr]*download // GTK thread only
+	findText      string
+	findDone      func(bool)
 
 	stopRunLoop   bool
 	isWindowShown bool
@@ -708,7 +744,10 @@ func NewWithOptions(opts Options) (WebView, error) {
 	if err != nil {
 		return nil, err
 	}
-	uiThreadOnce.Do(runtime.LockOSThread)
+	uiThreadOnce.Do(func() {
+		runtime.LockOSThread()
+		uiThreadID = syscall.Gettid()
+	})
 
 	w := &webview{
 		ownsWindow:     true,
@@ -718,6 +757,9 @@ func NewWithOptions(opts Options) (WebView, error) {
 		contentHidden:  opts.HideUntilLoaded,
 		onNavigation:   opts.OnNavigation,
 		onNewWindow:    opts.OnNewWindow,
+		onDownload:     opts.OnDownload,
+		onDownloadEnd:  opts.OnDownloadDone,
+		downloads:      map[uintptr]*download{},
 	}
 	w.id = registerEngine(w)
 	err = w.windowInit(uintptr(opts.Window))
@@ -769,6 +811,7 @@ func (w *webview) windowInit(window uintptr) error {
 	if w.onNewWindow != nil {
 		gSignalConnectData(w.webview, "create", createFn, w.id, 0, 0)
 	}
+	watchDownloads(w.webview)
 	if w.onNavigation != nil {
 		gSignalConnectData(w.webview, "load-failed", loadFailedFn, w.id, 0, 0)
 		gSignalConnectData(w.webview, "load-failed-with-tls-errors", loadTLSFailedFn, w.id, 0, 0)
@@ -1173,3 +1216,92 @@ func readGError(gerr uintptr) (uint32, int32, string) {
 	msg := cstr(*(*uintptr)(unsafe.Add(p, 8))) // #nosec G103 -- reads the message pointer field
 	return domain, code, msg
 }
+
+// --- downloads ---------------------------------------------------------------
+
+func registerDownloadFuncs(webkit uintptr) {
+	purego.RegisterLibFunc(&webkitDownloadGetWebView, webkit, "webkit_download_get_web_view")
+	purego.RegisterLibFunc(&webkitDownloadCancel, webkit, "webkit_download_cancel")
+	purego.RegisterLibFunc(&webkitDownloadSetDestination, webkit, "webkit_download_set_destination")
+	purego.RegisterLibFunc(&webkitDownloadSetAllowOverwrite, webkit, "webkit_download_set_allow_overwrite")
+	source := "webkit_web_view_get_context"
+	if gtk4 {
+		source = "webkit_web_view_get_network_session"
+	}
+	purego.RegisterLibFunc(&webkitWebViewGetDownloadSource, webkit, source)
+}
+
+type download struct {
+	path string
+	err  error
+}
+
+// downloadsWatched: downloads come from the WebKitWebContext (4.x) or
+// WebKitNetworkSession (6.0), which every web view shares, so the signal is
+// connected once and each download finds its web view.
+var downloadsWatched bool
+
+func watchDownloads(webview uintptr) {
+	if downloadsWatched {
+		return
+	}
+	downloadsWatched = true
+	gSignalConnectData(webkitWebViewGetDownloadSource(webview), "download-started", downloadStartFn, 0, 0, 0)
+}
+
+// downloadStarted cancels any download no OnDownload will place: WebKitGTK
+// would otherwise save it to the Downloads folder without asking.
+func downloadStarted(dl uintptr) {
+	w := engineForWebView(webkitDownloadGetWebView(dl))
+	if w == nil || w.onDownload == nil {
+		webkitDownloadCancel(dl)
+		return
+	}
+	gSignalConnectData(dl, "decide-destination", downloadDestFn, 0, 0, 0)
+	gSignalConnectData(dl, "failed", downloadFailFn, 0, 0, 0)
+	gSignalConnectData(dl, "finished", downloadDoneFn, 0, 0, 0)
+}
+
+func decideDestination(dl uintptr, suggested string) {
+	w := engineForWebView(webkitDownloadGetWebView(dl))
+	path := ""
+	if w != nil {
+		path = callDownload(w.onDownload, suggested)
+	}
+	if path == "" {
+		webkitDownloadCancel(dl)
+		return
+	}
+	w.downloads[dl] = &download{path: path}
+	// The user confirmed the path, overwrite included.
+	webkitDownloadSetAllowOverwrite(dl, true)
+	dest := path
+	if !gtk4 { // WebKitGTK 4.x takes a file URI, 6.0 a path
+		dest = (&url.URL{Scheme: "file", Path: path}).String()
+	}
+	webkitDownloadSetDestination(dl, dest)
+}
+
+func downloadFailed(dl, gerr uintptr) {
+	w := engineForWebView(webkitDownloadGetWebView(dl))
+	if w == nil || w.downloads[dl] == nil {
+		return
+	}
+	_, _, msg := readGError(gerr)
+	w.downloads[dl].err = errors.New(msg)
+}
+
+func downloadFinished(dl uintptr) {
+	w := engineForWebView(webkitDownloadGetWebView(dl))
+	if w == nil {
+		return
+	}
+	d := w.downloads[dl]
+	if d == nil {
+		return // cancelled before it had a destination
+	}
+	delete(w.downloads, dl)
+	callDownloadDone(w.onDownloadEnd, d.path, d.err)
+}
+
+func onUIThread() bool { return uiThreadID != 0 && syscall.Gettid() == uiThreadID }

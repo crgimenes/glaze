@@ -266,6 +266,11 @@ func (w *webview) showFileDialog(save, pickFolders, multi bool, opts FileDialogO
 		paths []string
 		err   error
 	}
+	// On the UI thread already: run here; dispatching and waiting would
+	// block the message loop that must run the dialog.
+	if onUIThread() {
+		return runFileDialog(w.window, save, pickFolders, multi, opts)
+	}
 	ch := make(chan outcome, 1)
 	w.Dispatch(func() {
 		paths, err := runFileDialog(w.window, save, pickFolders, multi, opts)

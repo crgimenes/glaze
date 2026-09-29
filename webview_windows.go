@@ -59,23 +59,24 @@ const (
 // --- bound Win32 functions -------------------------------------------------
 
 var (
-	getModuleHandleW  func(name uintptr) uintptr
-	registerClassExW  func(wc *wndClassExW) uint16
-	createWindowExW   func(exStyle uint32, class, name *uint16, style uint32, x, y, w, h int32, parent, menu, inst, param uintptr) uintptr
-	defWindowProcW    func(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr
-	getMessageW       func(m *msgStruct, hwnd uintptr, min, max uint32) int32
-	translateMessage  func(m *msgStruct) int32
-	dispatchMessageW  func(m *msgStruct) uintptr
-	postQuitMessage   func(code int32)
-	postMessageW      func(hwnd uintptr, msg uint32, wp, lp uintptr) int32
-	showWindow        func(hwnd uintptr, cmd int32) int32
-	setForegroundWin  func(hwnd uintptr) int32
-	updateWindow      func(hwnd uintptr) int32
-	destroyWindow     func(hwnd uintptr) int32
-	setWindowLongPtrW func(hwnd uintptr, index int32, val uintptr) uintptr
-	getWindowLongPtrW func(hwnd uintptr, index int32) uintptr
-	setWindowTextW    func(hwnd uintptr, text *uint16) int32
-	setWindowPos      func(hwnd, after uintptr, x, y, w, h int32, flags uint32) int32
+	getModuleHandleW   func(name uintptr) uintptr
+	getCurrentThreadID func() uint32
+	registerClassExW   func(wc *wndClassExW) uint16
+	createWindowExW    func(exStyle uint32, class, name *uint16, style uint32, x, y, w, h int32, parent, menu, inst, param uintptr) uintptr
+	defWindowProcW     func(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr
+	getMessageW        func(m *msgStruct, hwnd uintptr, min, max uint32) int32
+	translateMessage   func(m *msgStruct) int32
+	dispatchMessageW   func(m *msgStruct) uintptr
+	postQuitMessage    func(code int32)
+	postMessageW       func(hwnd uintptr, msg uint32, wp, lp uintptr) int32
+	showWindow         func(hwnd uintptr, cmd int32) int32
+	setForegroundWin   func(hwnd uintptr) int32
+	updateWindow       func(hwnd uintptr) int32
+	destroyWindow      func(hwnd uintptr) int32
+	setWindowLongPtrW  func(hwnd uintptr, index int32, val uintptr) uintptr
+	getWindowLongPtrW  func(hwnd uintptr, index int32) uintptr
+	setWindowTextW     func(hwnd uintptr, text *uint16) int32
+	setWindowPos       func(hwnd, after uintptr, x, y, w, h int32, flags uint32) int32
 
 	// comctl32 subclassing, used in embed mode: the host window keeps its own
 	// window procedure, so glaze's messages (WM_SIZE for bounds, WM_APP for
@@ -166,6 +167,7 @@ func ensureWinInit() error {
 			purego.RegisterFunc(fn, addr)
 		}
 		reg(&getModuleHandleW, kernel32, "GetModuleHandleW")
+		reg(&getCurrentThreadID, kernel32, "GetCurrentThreadId")
 		reg(&registerClassExW, user32, "RegisterClassExW")
 		reg(&createWindowExW, user32, "CreateWindowExW")
 		reg(&defWindowProcW, user32, "DefWindowProcW")
@@ -217,6 +219,7 @@ var (
 	engineSeq uintptr
 
 	uiThreadOnce sync.Once
+	uiThreadID   uint32 // the UI thread, for onUIThread
 
 	// windowCount tracks live owned windows so a user-initiated close of the last
 	// one ends Run() (mirrors the macOS backend's ref-count).
@@ -459,7 +462,10 @@ func NewWithOptions(opts Options) (WebView, error) {
 	if err != nil {
 		return nil, err
 	}
-	uiThreadOnce.Do(runtime.LockOSThread)
+	uiThreadOnce.Do(func() {
+		runtime.LockOSThread()
+		uiThreadID = getCurrentThreadID()
+	})
 
 	w := &webview{
 		ownsWindow:      opts.Window == nil,
@@ -607,3 +613,5 @@ func (w *webview) Destroy() {
 	w.dispatchMu.Unlock()
 	unregisterEngine(w.id)
 }
+
+func onUIThread() bool { return uiThreadID != 0 && getCurrentThreadID() == uiThreadID }

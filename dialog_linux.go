@@ -173,6 +173,11 @@ func (w *webview) showFileDialog(action int, multi bool, opts FileDialogOptions)
 	if err != nil {
 		return nil, err
 	}
+	// On the GTK thread already (a menu shortcut, a WebKit signal): run here;
+	// dispatching and waiting would block the loop that must run the dialog.
+	if onUIThread() {
+		return runFileChooser(w.window, action, multi, opts), nil
+	}
 	ch := make(chan []string, 1)
 	w.Dispatch(func() {
 		ch <- runFileChooser(w.window, action, multi, opts)

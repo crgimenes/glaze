@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -121,6 +123,7 @@ var (
 
 	appDelegateClass, scriptHandlerClass, windowDelegateClass, uiDelegateClass objc.Class
 	schemeHandlerClass, firstMouseViewClass, navDelegateClass                  objc.Class
+	downloadDelegateClass                                                      objc.Class
 )
 
 // Init prepares the macOS backend: loads AppKit + WebKit and registers the
@@ -277,6 +280,36 @@ func registerClasses() error {
 				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv) },
 			},
 			{
+				Cmd: sel("webView:decidePolicyForNavigationResponse:decisionHandler:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, response, handler objc.ID) {
+					policy := int64(wkPolicyAllow)
+					w := lookupEngine(self)
+					if w != nil && w.onDownload != nil && isDownloadResponse(response) {
+						policy = wkPolicyDownload
+					}
+					invokeNativeBlock(handler, "v@?q", unsafe.Pointer(&policy)) // #nosec G103 -- the arg's address, for NSInvocation
+				},
+			},
+			{
+				Cmd: sel("webView:decidePolicyForNavigationAction:decisionHandler:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, action, handler objc.ID) {
+					policy := int64(wkPolicyAllow)
+					w := lookupEngine(self)
+					if w != nil && w.onDownload != nil && isDownloadAction(action) {
+						policy = wkPolicyDownload
+					}
+					invokeNativeBlock(handler, "v@?q", unsafe.Pointer(&policy)) // #nosec G103 -- the arg's address, for NSInvocation
+				},
+			},
+			{
+				Cmd: sel("webView:navigationResponse:didBecomeDownload:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, response, download objc.ID) { adoptDownload(self, download) },
+			},
+			{
+				Cmd: sel("webView:navigationAction:didBecomeDownload:"),
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, action, download objc.ID) { adoptDownload(self, download) },
+			},
+			{
 				Cmd: sel("webView:didFinishNavigation:"),
 				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { ended(self, wv, 0) },
 			},
@@ -291,6 +324,31 @@ func registerClasses() error {
 		})
 	if err != nil {
 		return fmt.Errorf("webview: navigation delegate class: %w", err)
+	}
+
+	downloadDelegateClass, err = objc.RegisterClass(
+		"GlazeDownloadDelegate", objc.GetClass("NSObject"),
+		[]*objc.Protocol{objc.GetProtocol("WKDownloadDelegate")}, nil,
+		[]objc.MethodDef{
+			{
+				Cmd: sel("download:decideDestinationUsingResponse:suggestedFilename:completionHandler:"),
+				Fn:  decideDownloadDestination,
+			},
+			{
+				Cmd: sel("downloadDidFinish:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, download objc.ID) {
+					downloadEnded(self, download, nil)
+				},
+			},
+			{
+				Cmd: sel("download:didFailWithError:resumeData:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, download, nsErr, resume objc.ID) {
+					downloadEnded(self, download, errors.New(cstr(nsErr.Send(sel("localizedDescription")).Send(sel("UTF8String")))))
+				},
+			},
+		})
+	if err != nil {
+		return fmt.Errorf("webview: download delegate class: %w", err)
 	}
 
 	schemeHandlerClass, err = objc.RegisterClass(
@@ -394,10 +452,17 @@ func runOpenPanel(self objc.ID, _cmd objc.SEL, webView, parameters, frame, compl
 // it is driven through NSInvocation with the signature "v@?@": index 0 is the
 // block itself, index 1 the NSArray<NSURL*>* argument.
 func invokeOpenPanelCompletion(completionHandler, urls objc.ID) {
-	sig := class("NSMethodSignature").Send(sel("signatureWithObjCTypes:"), "v@?@")
+	invokeNativeBlock(completionHandler, "v@?@", unsafe.Pointer(&urls)) // #nosec G103 -- the arg's address, for NSInvocation
+}
+
+// invokeNativeBlock calls a block WebKit or AppKit handed us, with one
+// argument described by types ("v@?@" an object, "v@?q" an NSInteger).
+// objc.Block.Invoke only knows blocks made by objc.NewBlock.
+func invokeNativeBlock(block objc.ID, types string, arg unsafe.Pointer) {
+	sig := class("NSMethodSignature").Send(sel("signatureWithObjCTypes:"), types)
 	inv := class("NSInvocation").Send(sel("invocationWithMethodSignature:"), sig)
-	inv.Send(sel("setTarget:"), completionHandler)
-	inv.Send(sel("setArgument:atIndex:"), unsafe.Pointer(&urls), 1) // #nosec G103 -- pass the arg's address to NSInvocation
+	inv.Send(sel("setTarget:"), block)
+	inv.Send(sel("setArgument:atIndex:"), arg, 1)
 	inv.Send(sel("invoke"))
 }
 
@@ -532,6 +597,11 @@ type webview struct {
 	contentHidden bool
 	onNavigation  func(NavigationEvent)
 	onNewWindow   func(string)
+	onDownload    func(string) string
+	onDownloadEnd func(string, error)
+	// downloads maps an active WKDownload to its destination; main thread only.
+	downloads        map[objc.ID]string
+	downloadDelegate objc.ID
 	// provisionalURL is the target of the navigation in flight, for errors
 	// that do not carry the failing URL.
 	provisionalURL string
@@ -623,6 +693,9 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		contentHidden:  opts.HideUntilLoaded,
 		onNavigation:   opts.OnNavigation,
 		onNewWindow:    opts.OnNewWindow,
+		onDownload:     opts.OnDownload,
+		onDownloadEnd:  opts.OnDownloadDone,
+		downloads:      map[objc.ID]string{},
 		bindings:       map[string]func(id, req string) (any, error){},
 		schemeHandlers: opts.SchemeHandlers,
 		closed:         make(chan struct{}),
@@ -747,7 +820,11 @@ func (w *webview) windowSettings(debug bool) {
 		registerInstance(w.uiDelegate, w)
 		w.webView.Send(sel("setUIDelegate:"), w.uiDelegate)
 
-		if w.contentHidden || w.onNavigation != nil {
+		if w.onDownload != nil {
+			w.downloadDelegate = objc.ID(downloadDelegateClass).Send(sel("new"))
+			registerInstance(w.downloadDelegate, w)
+		}
+		if w.contentHidden || w.onNavigation != nil || w.onDownload != nil {
 			// Weak reference too, same as the UI delegate.
 			w.navDelegate = objc.ID(navDelegateClass).Send(sel("new"))
 			registerInstance(w.navDelegate, w)
@@ -1268,6 +1345,11 @@ func (w *webview) releaseWebViewDelegates() {
 		w.navDelegate.Send(sel("release"))
 		w.navDelegate = 0
 	}
+	if w.downloadDelegate != 0 {
+		unregisterInstance(w.downloadDelegate)
+		w.downloadDelegate.Send(sel("release"))
+		w.downloadDelegate = 0
+	}
 	if w.uiDelegate != 0 {
 		w.webView.Send(sel("setUIDelegate:"), objc.ID(0))
 		unregisterInstance(w.uiDelegate)
@@ -1335,4 +1417,77 @@ func isCancelled(nsErr objc.ID) bool {
 	domain, code := nsErrorCode(nsErr)
 	return domain == "NSURLErrorDomain" && code == -999 ||
 		domain == "WebKitErrorDomain" && code == 102
+}
+
+// WKNavigationActionPolicy / WKNavigationResponsePolicy: 1 allow, 2 download.
+const (
+	wkPolicyAllow    = 1
+	wkPolicyDownload = 2
+)
+
+// isDownloadResponse: a response the view cannot show, or one the server
+// marks as an attachment, is saved rather than displayed.
+func isDownloadResponse(response objc.ID) bool {
+	if !objc.Send[bool](response, sel("canShowMIMEType")) {
+		return true
+	}
+	r := response.Send(sel("response"))
+	if !objc.Send[bool](r, sel("isKindOfClass:"), class("NSHTTPURLResponse")) {
+		return false
+	}
+	cd := strings.ToLower(cstr(r.Send(sel("valueForHTTPHeaderField:"), nsstr("Content-Disposition")).Send(sel("UTF8String"))))
+	return strings.HasPrefix(strings.TrimSpace(cd), "attachment")
+}
+
+// isDownloadAction: a link with the download attribute.
+func isDownloadAction(action objc.ID) bool {
+	return objc.Send[bool](action, sel("respondsToSelector:"), sel("shouldPerformDownload")) &&
+		objc.Send[bool](action, sel("shouldPerformDownload"))
+}
+
+func adoptDownload(navDelegate, download objc.ID) {
+	w := lookupEngine(navDelegate)
+	if w == nil || w.downloadDelegate == 0 {
+		download.Send(sel("cancel:"), objc.ID(0))
+		return
+	}
+	// The delegate property is weak; w.downloadDelegate holds it.
+	download.Send(sel("setDelegate:"), w.downloadDelegate)
+}
+
+// decideDownloadDestination asks the app for a path outside WebKit's
+// callback (the app may run a modal save panel), then answers WebKit.
+func decideDownloadDestination(self objc.ID, _cmd objc.SEL, download, response, suggested, completion objc.ID) {
+	w := lookupEngine(self)
+	name := cstr(suggested.Send(sel("UTF8String")))
+	done := objc.Block(completion).Copy()
+	dispatchMain(func() {
+		defer done.Release()
+		var dest objc.ID
+		path := ""
+		if w != nil {
+			path = callDownload(w.onDownload, name)
+		}
+		if path != "" {
+			// The user confirmed the path, overwrite included; WKDownload
+			// refuses a destination that already exists.
+			_ = os.Remove(path)
+			w.downloads[download] = path
+			dest = class("NSURL").Send(sel("fileURLWithPath:"), nsstr(path))
+		}
+		invokeNativeBlock(objc.ID(done), "v@?@", unsafe.Pointer(&dest)) // #nosec G103 -- the arg's address, for NSInvocation
+	})
+}
+
+func downloadEnded(self, download objc.ID, err error) {
+	w := lookupEngine(self)
+	if w == nil {
+		return
+	}
+	path, ok := w.downloads[download]
+	if !ok {
+		return // cancelled before it had a destination
+	}
+	delete(w.downloads, download)
+	callDownloadDone(w.onDownloadEnd, path, err)
 }

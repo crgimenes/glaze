@@ -3,6 +3,9 @@ package glaze
 import (
 	"fmt"
 	"github.com/ebitengine/purego"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 
 	"errors"
@@ -58,6 +61,8 @@ func TestMain(m *testing.M) {
 		resNewWindow.Store(newWindowScenario())
 		resFind.Store(findScenario())
 		resZoom.Store(zoomScenario())
+		resDownload.Store(downloadScenario())
+		resNoDownloadHandler.Store(noDownloadHandlerScenario())
 		resClipboard.Store(clipboardScenario())
 	}
 	os.Exit(m.Run())
@@ -323,5 +328,44 @@ func TestNoBridgeDeniesClipboard(t *testing.T) {
 	want := "nobridge=false clipboard=true, nobridge=true clipboard=false"
 	if got != want {
 		t.Fatalf("script clipboard access: got %q, want %q", got, want)
+	}
+}
+
+var resNoDownloadHandler atomic.Value // string
+
+// noDownloadHandlerScenario: without OnDownload, WebKitGTK would save an
+// attachment to the Downloads folder (or home) on its own; glaze cancels it.
+func noDownloadHandlerScenario() string {
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Header().Set("Content-Disposition", `attachment; filename="glaze-unasked.txt"`)
+		_, _ = fmt.Fprint(rw, "must not be saved")
+	}))
+	defer srv.Close()
+	v, err := NewWithOptions(Options{})
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	defer v.Destroy()
+	time.AfterFunc(3*time.Second, v.Terminate)
+	v.Navigate(srv.URL + "/")
+	v.Run()
+	home, _ := os.UserHomeDir()
+	var found []string
+	for _, dir := range []string{filepath.Join(home, "Downloads"), home, os.TempDir()} {
+		p := filepath.Join(dir, "glaze-unasked.txt")
+		_, err := os.Stat(p)
+		if err == nil {
+			found = append(found, p)
+			_ = os.Remove(p)
+		}
+	}
+	return fmt.Sprintf("saved without asking: %v", found)
+}
+
+func TestNoDownloadWithoutHandler(t *testing.T) {
+	got, _ := resNoDownloadHandler.Load().(string)
+	requireGUI(t, got)
+	if got != "saved without asking: []" {
+		t.Fatal(got)
 	}
 }

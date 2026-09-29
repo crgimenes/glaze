@@ -29,3 +29,23 @@ func callFind(f func(bool), found bool) {
 	defer func() { _ = recover() }()
 	f(found)
 }
+
+func callDownload(f func(string) string, name string) (path string) {
+	if f == nil {
+		return ""
+	}
+	defer func() {
+		if recover() != nil {
+			path = ""
+		}
+	}()
+	return f(name)
+}
+
+func callDownloadDone(f func(string, error), path string, err error) {
+	if f == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	f(path, err)
+}

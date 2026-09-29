@@ -81,6 +81,20 @@ type Options struct {
 	// the engine before they get here. Called on the UI thread. macOS and
 	// Linux; never called on Windows.
 	OnNewWindow func(url string)
+
+	// OnDownload decides where a download the page starts (an attachment, a
+	// file the view cannot show, a link with the download attribute) is
+	// saved: it gets the suggested file name and returns the destination
+	// path, or "" to cancel. An existing file there is replaced -- the app is
+	// expected to have asked (a save panel does). Without OnDownload every
+	// download is cancelled; nothing is ever saved on the engine's own
+	// initiative. Called on the UI thread; may run a modal dialog. macOS and
+	// Linux; downloads are left to the engine on Windows.
+	OnDownload func(suggestedName string) (path string)
+
+	// OnDownloadDone reports a download OnDownload accepted: saved at path,
+	// or failed with err.
+	OnDownloadDone func(path string, err error)
 }
 
 // schemeMIME returns a response's MIME type or the octet-stream default.

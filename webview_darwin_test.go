@@ -3,6 +3,7 @@ package glaze
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"runtime"
 	"strconv"
@@ -60,6 +61,8 @@ func TestMain(m *testing.M) {
 		resNewWindow.Store(newWindowScenario())
 		resFind.Store(findScenario())
 		resZoom.Store(zoomScenario())
+		resDownload.Store(downloadScenario())
+		resPanelOnMain.Store(panelOnMainScenario())
 		// Last: this scenario runs its own [NSApp run] as the "external" host.
 		resExternalLoop.Store(externalLoopScenario())
 	}
@@ -615,5 +618,37 @@ func TestNewUnderAnExternalRunLoop(t *testing.T) {
 	requireGUI(t, got)
 	if got != want {
 		t.Fatalf("external run loop: got %q, want %q", got, want)
+	}
+}
+
+var resPanelOnMain atomic.Value // string
+
+// panelOnMainScenario opens a save panel from the main thread -- as a menu
+// item or a WebKit callback does -- and has it abort itself after a second.
+// Dispatching the panel and waiting for it from there used to hang forever.
+func panelOnMainScenario() string {
+	w, err := New(false)
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	defer w.Destroy()
+	result := "panel never returned"
+	w.Dispatch(func() {
+		time.AfterFunc(time.Second, func() {
+			dispatchMain(func() { class("NSApplication").Send(sel("sharedApplication")).Send(sel("abortModal")) })
+		})
+		path, err := w.SaveFile(FileDialogOptions{Filename: "x.txt"})
+		result = fmt.Sprintf("returned %q err=%v", path, err)
+		w.Terminate()
+	})
+	w.Run()
+	return result
+}
+
+func TestFilePanelFromMainThread(t *testing.T) {
+	got, _ := resPanelOnMain.Load().(string)
+	requireGUI(t, got)
+	if got != `returned "" err=<nil>` {
+		t.Fatalf("save panel from the main thread: %s", got)
 	}
 }

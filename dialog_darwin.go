@@ -39,9 +39,11 @@ func (w *webview) SaveFile(opts FileDialogOptions) (string, error) {
 // presentOpenPanel builds and runs an NSOpenPanel on the UI thread and returns
 // the selected filesystem paths (empty when cancelled).
 func (w *webview) presentOpenPanel(opts FileDialogOptions, canFiles, canDirs, multiple bool) []string {
-	ch := make(chan []string, 1)
-	w.Dispatch(func() {
-		var paths []string
+	var paths []string
+	// performOnMain, not Dispatch plus a wait: called from the main thread
+	// (a menu item, a WebKit callback) the wait would starve the very queue
+	// that must run the panel.
+	performOnMain(func() {
 		autorelease(func() {
 			panel := class("NSOpenPanel").Send(sel("openPanel"))
 			configureOpenPanel(panel, canFiles, canDirs, multiple, opts)
@@ -49,17 +51,15 @@ func (w *webview) presentOpenPanel(opts FileDialogOptions, canFiles, canDirs, mu
 				paths = urlArrayPaths(panel.Send(sel("URLs")))
 			}
 		})
-		ch <- paths
 	})
-	return <-ch
+	return paths
 }
 
 // presentSavePanel builds and runs an NSSavePanel on the UI thread and returns
 // the chosen path (empty when cancelled).
 func (w *webview) presentSavePanel(opts FileDialogOptions) string {
-	ch := make(chan string, 1)
-	w.Dispatch(func() {
-		var path string
+	var path string
+	performOnMain(func() {
 		autorelease(func() {
 			panel := class("NSSavePanel").Send(sel("savePanel"))
 			applyCommonPanelOptions(panel, opts)
@@ -74,9 +74,8 @@ func (w *webview) presentSavePanel(opts FileDialogOptions) string {
 				path = urlPath(panel.Send(sel("URL")))
 			}
 		})
-		ch <- path
 	})
-	return <-ch
+	return path
 }
 
 // configureOpenPanel applies the open-panel settings shared by the public
