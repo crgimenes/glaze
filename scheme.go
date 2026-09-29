@@ -60,7 +60,9 @@ type Options struct {
 	// NoBridge leaves out the JS<->Go bridge: no window.__webview__ and no
 	// native message handler, so the page has no channel back to the process.
 	// Bind and Unbind then return ErrBridgeDisabled; Init and Eval still work.
-	// Use it when the web view loads content the app does not control.
+	// Use it when the web view loads content the app does not control: on
+	// Linux it also denies the page script access to the clipboard (macOS
+	// denies it by default).
 	NoBridge bool
 
 	// HideUntilLoaded keeps the web view hidden until the first navigation
@@ -71,6 +73,14 @@ type Options struct {
 	// OnNavigation is called on the UI thread when a main-frame navigation
 	// finishes or fails. macOS and Linux; never called on Windows.
 	OnNavigation func(NavigationEvent)
+
+	// OnNewWindow receives the URL of a page's request for a new window (a
+	// target=_blank link, window.open). glaze never opens the window itself,
+	// with or without a handler: the request is dropped and the page's
+	// window.open returns null. Popups without a user gesture are blocked by
+	// the engine before they get here. Called on the UI thread. macOS and
+	// Linux; never called on Windows.
+	OnNewWindow func(url string)
 }
 
 // schemeMIME returns a response's MIME type or the octet-stream default.

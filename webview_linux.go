@@ -86,6 +86,7 @@ var (
 	webkitWebViewGetUserContentManager            func(webview uintptr) uintptr
 	webkitWebViewGetSettings                      func(webview uintptr) uintptr
 	webkitSettingsSetJavascriptCanAccessClipboard func(settings uintptr, enabled bool)
+	webkitSettingsSetJavascriptCanOpenWindows     func(settings uintptr, enabled bool)
 	webkitSettingsSetEnableWriteConsoleToStdout   func(settings uintptr, enabled bool)
 	webkitSettingsSetEnableDeveloperExtras        func(settings uintptr, enabled bool)
 	webkitWebViewLoadURI                          func(webview uintptr, uri string)
@@ -108,6 +109,9 @@ var (
 
 	jscValueToString func(value uintptr) uintptr
 
+	webkitNavigationActionGetRequest func(action uintptr) uintptr
+	webkitURIRequestGetURI           func(request uintptr) uintptr
+
 	webkitNetworkErrorQuark func() uint32
 	webkitPolicyErrorQuark  func() uint32
 )
@@ -125,6 +129,7 @@ var (
 	loadChangedFn    uintptr
 	loadFailedFn     uintptr
 	loadTLSFailedFn  uintptr
+	createFn         uintptr
 
 	// Library handles kept after ensureInit so other files (e.g. the file
 	// dialogs in dialog_linux.go) can lazily resolve extra symbols without
@@ -239,6 +244,7 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitWebViewGetUserContentManager, webkit, "webkit_web_view_get_user_content_manager")
 		purego.RegisterLibFunc(&webkitWebViewGetSettings, webkit, "webkit_web_view_get_settings")
 		purego.RegisterLibFunc(&webkitSettingsSetJavascriptCanAccessClipboard, webkit, "webkit_settings_set_javascript_can_access_clipboard")
+		purego.RegisterLibFunc(&webkitSettingsSetJavascriptCanOpenWindows, webkit, "webkit_settings_set_javascript_can_open_windows_automatically")
 		purego.RegisterLibFunc(&webkitSettingsSetEnableWriteConsoleToStdout, webkit, "webkit_settings_set_enable_write_console_messages_to_stdout")
 		purego.RegisterLibFunc(&webkitSettingsSetEnableDeveloperExtras, webkit, "webkit_settings_set_enable_developer_extras")
 		purego.RegisterLibFunc(&webkitWebViewLoadURI, webkit, "webkit_web_view_load_uri")
@@ -271,6 +277,8 @@ func ensureInit() error {
 
 		purego.RegisterLibFunc(&jscValueToString, jsc, "jsc_value_to_string")
 		purego.RegisterLibFunc(&webkitNetworkErrorQuark, webkit, "webkit_network_error_quark")
+		purego.RegisterLibFunc(&webkitNavigationActionGetRequest, webkit, "webkit_navigation_action_get_request")
+		purego.RegisterLibFunc(&webkitURIRequestGetURI, webkit, "webkit_uri_request_get_uri")
 		purego.RegisterLibFunc(&webkitPolicyErrorQuark, webkit, "webkit_policy_error_quark")
 
 		dispatchSourceFn = purego.NewCallback(func(data uintptr) uintptr {
@@ -313,6 +321,16 @@ func ensureInit() error {
 				w.tlsFailed = true
 			}
 			return 0 // FALSE: refuse the certificate; WebKit then emits load-failed
+		})
+		// GtkWidget* create(WebKitWebView*, WebKitNavigationAction*, gpointer):
+		// returning NULL creates no web view; the request goes to OnNewWindow.
+		createFn = purego.NewCallback(func(webview, action, userData uintptr) uintptr {
+			w := lookupEngine(userData)
+			if w != nil {
+				uri := cstr(webkitURIRequestGetURI(webkitNavigationActionGetRequest(action)))
+				callNewWindow(w.onNewWindow, uri)
+			}
+			return 0
 		})
 		windowDestroyFn = purego.NewCallback(func(widget, userData uintptr) uintptr {
 			w := lookupEngine(userData)
@@ -432,6 +450,7 @@ type webview struct {
 	// contentHidden is true while HideUntilLoaded holds the web view back.
 	contentHidden bool
 	onNavigation  func(NavigationEvent)
+	onNewWindow   func(string)
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
 	// so that navigation is reported once, as a failure.
 	loadFailed bool
@@ -658,6 +677,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		noBridge:       opts.NoBridge,
 		contentHidden:  opts.HideUntilLoaded,
 		onNavigation:   opts.OnNavigation,
+		onNewWindow:    opts.OnNewWindow,
 	}
 	w.id = registerEngine(w)
 	err = w.windowInit(uintptr(opts.Window))
@@ -706,6 +726,9 @@ func (w *webview) windowInit(window uintptr) error {
 	if w.contentHidden || w.onNavigation != nil {
 		gSignalConnectData(w.webview, "load-changed", loadChangedFn, w.id, 0, 0)
 	}
+	if w.onNewWindow != nil {
+		gSignalConnectData(w.webview, "create", createFn, w.id, 0, 0)
+	}
 	if w.onNavigation != nil {
 		gSignalConnectData(w.webview, "load-failed", loadFailedFn, w.id, 0, 0)
 		gSignalConnectData(w.webview, "load-failed-with-tls-errors", loadTLSFailedFn, w.id, 0, 0)
@@ -724,7 +747,13 @@ func (w *webview) windowInit(window uintptr) error {
 
 func (w *webview) windowSettings(debug bool) {
 	settings := webkitWebViewGetSettings(w.webview)
-	webkitSettingsSetJavascriptCanAccessClipboard(settings, true)
+	// Handy for an app's own pages; a page the app does not control
+	// (NoBridge) must not read or write the clipboard on its own, which is
+	// also WKWebView's default on macOS.
+	webkitSettingsSetJavascriptCanAccessClipboard(settings, !w.noBridge)
+	// The default already, set so both engines give the same guarantee:
+	// popups only from a user gesture.
+	webkitSettingsSetJavascriptCanOpenWindows(settings, false)
 	if debug {
 		webkitSettingsSetEnableWriteConsoleToStdout(settings, true)
 		webkitSettingsSetEnableDeveloperExtras(settings, true)

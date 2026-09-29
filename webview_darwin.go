@@ -220,10 +220,25 @@ func registerClasses() error {
 	uiDelegateClass, err = objc.RegisterClass(
 		"GlazeUIDelegate", objc.GetClass("NSObject"),
 		[]*objc.Protocol{objc.GetProtocol("WKUIDelegate")}, nil,
-		[]objc.MethodDef{{
-			Cmd: sel("webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:"),
-			Fn:  runOpenPanel,
-		}})
+		[]objc.MethodDef{
+			{
+				Cmd: sel("webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:"),
+				Fn:  runOpenPanel,
+			},
+			{
+				// Returning nil creates no web view: the request goes to
+				// OnNewWindow instead of opening a window here.
+				Cmd: sel("webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, config, action, features objc.ID) objc.ID {
+					w := lookupEngine(self)
+					if w != nil {
+						url := absoluteString(action.Send(sel("request")).Send(sel("URL")))
+						callNewWindow(w.onNewWindow, url)
+					}
+					return 0
+				},
+			},
+		})
 	if err != nil {
 		return fmt.Errorf("webview: ui delegate class: %w", err)
 	}
@@ -516,6 +531,7 @@ type webview struct {
 	// contentHidden is true while HideUntilLoaded holds the web view back.
 	contentHidden bool
 	onNavigation  func(NavigationEvent)
+	onNewWindow   func(string)
 	// provisionalURL is the target of the navigation in flight, for errors
 	// that do not carry the failing URL.
 	provisionalURL string
@@ -606,6 +622,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		noBridge:       opts.NoBridge,
 		contentHidden:  opts.HideUntilLoaded,
 		onNavigation:   opts.OnNavigation,
+		onNewWindow:    opts.OnNewWindow,
 		bindings:       map[string]func(id, req string) (any, error){},
 		schemeHandlers: opts.SchemeHandlers,
 		closed:         make(chan struct{}),
@@ -693,6 +710,9 @@ func (w *webview) windowSettings(debug bool) {
 			prefs.Send(sel("setValue:forKey:"), yes, nsstr("developerExtrasEnabled"))
 		}
 		prefs.Send(sel("setValue:forKey:"), yes, nsstr("fullScreenEnabled"))
+		// macOS lets window.open run without a user gesture by default; popups
+		// must come from a click, as they do on WebKitGTK.
+		prefs.Send(sel("setJavaScriptCanOpenWindowsAutomatically:"), false)
 
 		// Register custom scheme handlers on the configuration BEFORE the
 		// WKWebView is created — WKWebView copies its configuration at init, so
@@ -724,6 +744,7 @@ func (w *webview) windowSettings(debug bool) {
 
 		// UIDelegate is a weak reference; keep our own strong ref in w.uiDelegate.
 		w.uiDelegate = objc.ID(uiDelegateClass).Send(sel("new"))
+		registerInstance(w.uiDelegate, w)
 		w.webView.Send(sel("setUIDelegate:"), w.uiDelegate)
 
 		if w.contentHidden || w.onNavigation != nil {
@@ -1221,6 +1242,7 @@ func (w *webview) releaseWebViewDelegates() {
 	}
 	if w.uiDelegate != 0 {
 		w.webView.Send(sel("setUIDelegate:"), objc.ID(0))
+		unregisterInstance(w.uiDelegate)
 		w.uiDelegate.Send(sel("release"))
 		w.uiDelegate = 0
 	}

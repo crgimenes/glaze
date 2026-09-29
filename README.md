@@ -303,6 +303,20 @@ navigation cancelled because another replaced it is not reported. Setting
 error page is not loaded (macOS has none), so the previous page stays. macOS
 and Linux; never called on Windows.
 
+### New windows the page asks for
+
+```go
+w, err := glaze.NewWithOptions(glaze.Options{
+    OnNewWindow: func(url string) { openSomewhere(url) },
+})
+```
+
+A `target=_blank` link or `window.open` never opens a window by itself: the URL
+goes to `OnNewWindow` (on the UI thread) and the page's `window.open` returns
+null. Popups need a user gesture on both engines -- glaze turns off macOS's
+default of letting scripts open windows on their own. macOS and Linux; never
+called on Windows.
+
 ### First click on an inactive window (macOS)
 
 On macOS a click on a window that does not have focus is spent *activating* the

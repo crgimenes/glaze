@@ -11,3 +11,13 @@ func callNavigation(f func(NavigationEvent), ev NavigationEvent) {
 	defer func() { _ = recover() }()
 	f(ev)
 }
+
+// callNewWindow runs the app's new-window handler with panic containment,
+// like callNavigation.
+func callNewWindow(f func(string), url string) {
+	if f == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	f(url)
+}

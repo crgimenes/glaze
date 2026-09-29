@@ -1,6 +1,10 @@
 package glaze
 
 import (
+	"fmt"
+	"github.com/ebitengine/purego"
+	"strings"
+
 	"errors"
 	"flag"
 	"os"
@@ -51,6 +55,8 @@ func TestMain(m *testing.M) {
 		resNavigation.Store(navigationScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
+		resNewWindow.Store(newWindowScenario())
+		resClipboard.Store(clipboardScenario())
 	}
 	os.Exit(m.Run())
 }
@@ -278,5 +284,42 @@ func TestRichBindingTypes(t *testing.T) {
 	requireGUI(t, got)
 	if got != want {
 		t.Fatalf("rich types = %q, want %q", got, want)
+	}
+}
+
+var resClipboard atomic.Value // string
+
+// clipboardScenario reads WebKitGTK's script clipboard setting for a web view
+// with and without NoBridge: a page the app does not control gets no script
+// access to the clipboard, the app's own pages keep it.
+func clipboardScenario() string {
+	names := []string{"libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37"}
+	if gtk4 {
+		names = []string{"libwebkitgtk-6.0.so.4"}
+	}
+	var got []string
+	for _, noBridge := range []bool{false, true} {
+		v, err := NewWithOptions(Options{NoBridge: noBridge})
+		if err != nil {
+			return "new error: " + err.Error()
+		}
+		webkit, err := openFirst(names...)
+		if err != nil {
+			return "webkit: " + err.Error()
+		}
+		var allowed func(settings uintptr) bool
+		purego.RegisterLibFunc(&allowed, webkit, "webkit_settings_get_javascript_can_access_clipboard")
+		got = append(got, fmt.Sprintf("nobridge=%v clipboard=%v", noBridge, allowed(webkitWebViewGetSettings(v.(*webview).webview))))
+		v.Destroy()
+	}
+	return strings.Join(got, ", ")
+}
+
+func TestNoBridgeDeniesClipboard(t *testing.T) {
+	got, _ := resClipboard.Load().(string)
+	requireGUI(t, got)
+	want := "nobridge=false clipboard=true, nobridge=true clipboard=false"
+	if got != want {
+		t.Fatalf("script clipboard access: got %q, want %q", got, want)
 	}
 }
