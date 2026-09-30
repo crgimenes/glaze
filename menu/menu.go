@@ -24,11 +24,17 @@ package menu
 
 import (
 	"errors"
+	"fmt"
 	"unsafe"
 )
 
 // ErrUnsupported is returned by Set on a platform with no menu backend.
-var ErrUnsupported = errors.New("menu: not supported on this platform")
+//
+// It wraps the standard errors.ErrUnsupported, so an application that also
+// uses other optional-capability packages can test them all with one errors.Is
+// rather than importing each one to name its sentinel. errors.Is against this
+// variable still matches, as before.
+var ErrUnsupported = fmt.Errorf("menu: not supported on this platform: %w", errors.ErrUnsupported)
 
 // Item is one entry in a menu. A zero Item with Separator=true is a divider; an
 // Item with a non-empty Submenu is a sub-menu (its OnClick is ignored).
