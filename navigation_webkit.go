@@ -12,9 +12,9 @@ func callNavigation(f func(NavigationEvent), ev NavigationEvent) {
 	f(ev)
 }
 
-// callNewWindow runs the app's new-window handler with panic containment,
-// like callNavigation.
-func callNewWindow(f func(string), url string) {
+// callURL runs an app handler that takes a URL (new window, navigation
+// start) with panic containment, like callNavigation.
+func callURL(f func(string), url string) {
 	if f == nil {
 		return
 	}

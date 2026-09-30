@@ -57,6 +57,7 @@ func TestMain(m *testing.M) {
 		resNoBridge.Store(noBridgeScenario())
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resRevealTiming.Store(revealTimingScenario())
+		resSpinner.Store(spinnerScenario())
 		resNavigation.Store(navigationScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
@@ -420,4 +421,13 @@ func TestProgramNameNamesTheWindow(t *testing.T) {
 	if got != want {
 		t.Fatalf("g_get_prgname = %q, want %q", got, want)
 	}
+}
+
+var gtkWidgetGetVisible func(widget uintptr) bool
+
+func spinnerVisible(w *webview) bool {
+	if gtkWidgetGetVisible == nil {
+		purego.RegisterLibFunc(&gtkWidgetGetVisible, gtkLib, "gtk_widget_get_visible")
+	}
+	return w.spinner != 0 && gtkWidgetGetVisible(w.spinner)
 }

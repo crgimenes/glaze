@@ -16,8 +16,8 @@ import (
 var resNavigation atomic.Value // string
 
 // navigationScenario drives four navigations: one replaced while it waits for
-// the server (must not be reported), one that finishes, one refused (plain
-// failure) and one to a self-signed https server (TLS failure).
+// the server (its start is reported, its end is not), one that finishes, one
+// refused (plain failure) and one to a self-signed https server (TLS failure).
 func navigationScenario() string {
 	refused, err := closedPort()
 	if err != nil {
@@ -38,14 +38,16 @@ func navigationScenario() string {
 	defer tlsSrv.Close()
 
 	var w WebView
-	var got []string
+	var got, starts []string
+	name := func(url string) string {
+		return strings.NewReplacer(tlsSrv.URL, "TLSSERVER", refused, "REFUSED", slow.URL, "SLOW").Replace(url)
+	}
 	onNav := func(ev NavigationEvent) {
 		kind := "finished"
 		if ev.Kind == NavigationFailed {
 			kind = fmt.Sprintf("failed err=%v", ev.Err != nil && ev.Err.Error() != "")
 		}
-		url := strings.NewReplacer(tlsSrv.URL, "TLSSERVER", refused, "REFUSED").Replace(ev.URL)
-		got = append(got, fmt.Sprintf("%s %s tls=%v", kind, url, ev.TLS))
+		got = append(got, fmt.Sprintf("%s %s tls=%v", kind, name(ev.URL), ev.TLS))
 		switch len(got) {
 		case 1:
 			w.Navigate(refused + "/")
@@ -59,9 +61,10 @@ func navigationScenario() string {
 		return &SchemeResponse{Body: []byte("<html><body>ok</body></html>"), MIMEType: "text/html"}
 	}
 	w, err = NewWithOptions(Options{
-		NoBridge:       true,
-		OnNavigation:   onNav,
-		SchemeHandlers: map[string]SchemeHandler{"probe": page},
+		NoBridge:          true,
+		OnNavigation:      onNav,
+		OnNavigationStart: func(url string) { starts = append(starts, name(url)) },
+		SchemeHandlers:    map[string]SchemeHandler{"probe": page},
 	})
 	if err != nil {
 		return "new error: " + err.Error()
@@ -75,7 +78,7 @@ func navigationScenario() string {
 	if timedOut.Load() {
 		got = append(got, "TIMEOUT")
 	}
-	return strings.Join(got, " | ")
+	return strings.Join(got, " | ") + " || starts " + strings.Join(starts, " ")
 }
 
 // closedPort returns http://127.0.0.1:<port> for a port that was just free:
@@ -95,7 +98,8 @@ func TestOnNavigation(t *testing.T) {
 	requireGUI(t, got)
 	want := "finished probe://test/ok tls=false" +
 		" | failed err=true REFUSED/ tls=false" +
-		" | failed err=true TLSSERVER/ tls=true"
+		" | failed err=true TLSSERVER/ tls=true" +
+		" || starts SLOW/ probe://test/ok REFUSED/ TLSSERVER/"
 	if got != want {
 		t.Fatalf("OnNavigation events: got %q, want %q", got, want)
 	}

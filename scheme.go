@@ -78,6 +78,13 @@ type Options struct {
 	// finishes or fails. macOS and Linux; never called on Windows.
 	OnNavigation func(NavigationEvent)
 
+	// OnNavigationStart is called on the UI thread when a main-frame
+	// navigation starts, with the URL requested; a redirect is not a new
+	// start. The navigation then ends in OnNavigation, unless it is cancelled
+	// (replaced by another, stopped, or turned into a download), which is not
+	// reported. macOS and Linux; never called on Windows.
+	OnNavigationStart func(url string)
+
 	// OnNewWindow receives the URL of a page's request for a new window (a
 	// target=_blank link, window.open). glaze never opens the window itself,
 	// with or without a handler: the request is dropped and the page's

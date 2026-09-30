@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -36,8 +37,14 @@ const (
 	nsEventTypeApplicationDefined = 15
 	nsEventMaskAny                = ^uint(0)
 
+	nsViewMinXMargin    = 1 << 0
 	nsViewWidthSizable  = 1 << 1
+	nsViewMaxXMargin    = 1 << 2
+	nsViewMinYMargin    = 1 << 3
 	nsViewHeightSizable = 1 << 4
+	nsViewMaxYMargin    = 1 << 5
+
+	nsProgressIndicatorStyleSpinning = 1
 
 	nsModalResponseOK = 1
 
@@ -242,7 +249,7 @@ func registerClasses() error {
 					w := lookupEngine(self)
 					if w != nil {
 						url := absoluteString(action.Send(sel("request")).Send(sel("URL")))
-						callNewWindow(w.onNewWindow, url)
+						callURL(w.onNewWindow, url)
 					}
 					return 0
 				},
@@ -501,11 +508,16 @@ type webview struct {
 	noBridge   bool
 	// contentHidden is true while HideUntilLoaded holds the web view back.
 	contentHidden bool
-	onNavigation  func(NavigationEvent)
-	onNewWindow   func(string)
-	ephemeral     bool
-	onDownload    func(string) string
-	onDownloadEnd func(string, error)
+	// spinner shows in its place when the wait passes spinnerDelay; owned by
+	// widget.
+	spinner      objc.ID
+	onNavigation func(NavigationEvent)
+	// onNavigationStart: see Options.OnNavigationStart.
+	onNavigationStart func(string)
+	onNewWindow       func(string)
+	ephemeral         bool
+	onDownload        func(string) string
+	onDownloadEnd     func(string, error)
 	// downloads maps an active WKDownload to its destination; main thread only.
 	downloads        map[objc.ID]string
 	downloadDelegate objc.ID
@@ -595,20 +607,21 @@ func NewWithOptions(opts Options) (WebView, error) {
 // newWebView builds the webview on the UI thread.
 func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 	w := &webview{
-		ownsWindow:     true,
-		debug:          opts.Debug,
-		firstMouse:     opts.AcceptsFirstMouse,
-		noBridge:       opts.NoBridge,
-		contentHidden:  opts.HideUntilLoaded,
-		onNavigation:   opts.OnNavigation,
-		onNewWindow:    opts.OnNewWindow,
-		ephemeral:      opts.Ephemeral,
-		onDownload:     opts.OnDownload,
-		onDownloadEnd:  opts.OnDownloadDone,
-		downloads:      map[objc.ID]string{},
-		bindings:       map[string]func(id, req string) (any, error){},
-		schemeHandlers: opts.SchemeHandlers,
-		closed:         make(chan struct{}),
+		ownsWindow:        true,
+		debug:             opts.Debug,
+		firstMouse:        opts.AcceptsFirstMouse,
+		noBridge:          opts.NoBridge,
+		contentHidden:     opts.HideUntilLoaded,
+		onNavigation:      opts.OnNavigation,
+		onNavigationStart: opts.OnNavigationStart,
+		onNewWindow:       opts.OnNewWindow,
+		ephemeral:         opts.Ephemeral,
+		onDownload:        opts.OnDownload,
+		onDownloadEnd:     opts.OnDownloadDone,
+		downloads:         map[objc.ID]string{},
+		bindings:          map[string]func(id, req string) (any, error){},
+		schemeHandlers:    opts.SchemeHandlers,
+		closed:            make(chan struct{}),
 	}
 	w.app = app
 	w.windowInit(objc.ID(uintptr(opts.Window)))
@@ -737,7 +750,7 @@ func (w *webview) windowSettings(debug bool) {
 			w.downloadDelegate = objc.ID(downloadDelegateClass).Send(sel("new"))
 			registerInstance(w.downloadDelegate, w)
 		}
-		if w.contentHidden || w.onNavigation != nil || w.onDownload != nil {
+		if w.contentHidden || w.onNavigation != nil || w.onNavigationStart != nil || w.onDownload != nil {
 			// Weak reference too, same as the UI delegate.
 			w.navDelegate = objc.ID(navDelegateClass).Send(sel("new"))
 			registerInstance(w.navDelegate, w)
@@ -760,6 +773,9 @@ func (w *webview) windowSettings(debug bool) {
 		w.widget = widget.Send(sel("retain"))
 		w.widget.Send(sel("setAutoresizesSubviews:"), true)
 		w.widget.Send(sel("addSubview:"), w.webView)
+		if w.contentHidden {
+			w.addSpinner(rect)
+		}
 
 		w.window.Send(sel("setContentView:"), w.widget)
 		if w.ownsWindow {
@@ -792,6 +808,7 @@ func postWakeEvent(app objc.ID) {
 }
 
 func (w *webview) onWindowWillClose() {
+	w.spinner = 0
 	w.widget = 0
 	w.webView = 0
 	w.window = 0
@@ -1111,6 +1128,7 @@ func (w *webview) destroyOnUI() {
 				w.webView.Send(sel("release"))
 				w.webView = 0
 			}
+			w.spinner = 0 // released with widget
 			if w.widget != 0 {
 				if w.widget == w.window.Send(sel("contentView")) {
 					w.window.Send(sel("setContentView:"), objc.ID(0))
@@ -1271,6 +1289,30 @@ func (w *webview) releaseWebViewDelegates() {
 	}
 }
 
+// addSpinner centers a spinner over the held-back web view. It shows after
+// spinnerDelay, so a slow first page does not look like a window that is
+// doing nothing.
+func (w *webview) addSpinner(bounds cgRect) {
+	const size = 32
+	frame := cgRect{cgPoint{(bounds.Size.Width - size) / 2, (bounds.Size.Height - size) / 2}, cgSize{size, size}}
+	s := class("NSProgressIndicator").Send(sel("alloc")).Send(sel("initWithFrame:"), frame)
+	s.Send(sel("setStyle:"), nsProgressIndicatorStyleSpinning)
+	s.Send(sel("setIndeterminate:"), true)
+	s.Send(sel("setHidden:"), true)
+	s.Send(sel("setAutoresizingMask:"), uint(nsViewMinXMargin|nsViewMaxXMargin|nsViewMinYMargin|nsViewMaxYMargin))
+	w.widget.Send(sel("addSubview:"), s)
+	s.Send(sel("release"))
+	w.spinner = s
+	time.AfterFunc(spinnerDelay, func() {
+		dispatchMain(func() {
+			if w.spinner != 0 {
+				w.spinner.Send(sel("setHidden:"), false)
+				w.spinner.Send(sel("startAnimation:"), objc.ID(0))
+			}
+		})
+	})
+}
+
 // revealContent shows a web view held back by HideUntilLoaded, once. It runs
 // from navigation delegate callbacks, so already on the main thread.
 func (w *webview) revealContent() {
@@ -1278,6 +1320,10 @@ func (w *webview) revealContent() {
 		return
 	}
 	w.contentHidden = false
+	if w.spinner != 0 {
+		w.spinner.Send(sel("removeFromSuperview"))
+		w.spinner = 0
+	}
 	w.webView.Send(sel("setHidden:"), false)
 	// A hidden view could not take first responder at birth.
 	w.window.Send(sel("makeFirstResponder:"), w.webView)
@@ -1466,10 +1512,15 @@ func registerNavigationClasses() error {
 	}
 	// While a navigation is provisional, wv.URL is its target; after a
 	// provisional failure it reverts to the previous page, so remember it now.
-	provisional := func(self, wv objc.ID) {
+	// A redirect moves the target of the same navigation: not a new start.
+	provisional := func(self, wv objc.ID, started bool) {
 		w := lookupEngine(self)
-		if w != nil {
-			w.provisionalURL = absoluteString(wv.Send(sel("URL")))
+		if w == nil {
+			return
+		}
+		w.provisionalURL = absoluteString(wv.Send(sel("URL")))
+		if started {
+			callURL(w.onNavigationStart, w.provisionalURL)
 		}
 	}
 	navDelegateClass, err = objc.RegisterClass(
@@ -1478,11 +1529,11 @@ func registerNavigationClasses() error {
 		[]objc.MethodDef{
 			{
 				Cmd: sel("webView:didStartProvisionalNavigation:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv) },
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv, true) },
 			},
 			{
 				Cmd: sel("webView:didReceiveServerRedirectForProvisionalNavigation:"),
-				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv) },
+				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) { provisional(self, wv, false) },
 			},
 			{
 				Cmd: sel("webView:decidePolicyForNavigationResponse:decisionHandler:"),

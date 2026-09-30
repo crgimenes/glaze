@@ -59,6 +59,7 @@ func TestMain(m *testing.M) {
 		resNoBridge.Store(noBridgeScenario())
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resRevealTiming.Store(revealTimingScenario())
+		resSpinner.Store(spinnerScenario())
 		resNavigation.Store(navigationScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
@@ -698,4 +699,8 @@ func TestOnOpenURLs(t *testing.T) {
 	if want := "https://example.com/a https://example.com/b?q=1"; got != want {
 		t.Fatalf("OnOpenURLs: got %q, want %q", got, want)
 	}
+}
+
+func spinnerVisible(w *webview) bool {
+	return w.spinner != 0 && !objc.Send[bool](w.spinner, sel("isHidden"))
 }

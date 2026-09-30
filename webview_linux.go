@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -78,6 +79,12 @@ var (
 	gtkWidgetGrabFocus        func(widget uintptr)
 	gtkWindowPresent          func(window uintptr)
 	gtkWindowClose            func(window uintptr)
+	gtkOverlayNew             func() uintptr
+	gtkOverlayAddOverlay      func(overlay, widget uintptr)
+	gtkSpinnerNew             func() uintptr
+	gtkSpinnerStart           func(spinner uintptr)
+	gtkWidgetSetHalign        func(widget uintptr, align int)
+	gtkWidgetSetValign        func(widget uintptr, align int)
 
 	// GTK 4 variants (bound + used only when gtk4 is true).
 	gtk4                    bool
@@ -86,6 +93,8 @@ var (
 	gtkWindowSetChild       func(window, widget uintptr)
 	gtkWidgetSetVisible     func(widget uintptr, visible bool)
 	gtkWindowSetDefaultSize func(window uintptr, w, h int)
+	gtkOverlaySetChild      func(overlay, child uintptr)
+	gtkOverlayRemoveOverlay func(overlay, widget uintptr)
 	webkitRegisterHandler3  func(manager uintptr, name string, world uintptr)
 
 	webkitWebViewNew                              func() uintptr
@@ -255,6 +264,8 @@ func ensureInit() error {
 			purego.RegisterLibFunc(&gtkWindowSetChild, gtk, "gtk_window_set_child")
 			purego.RegisterLibFunc(&gtkWidgetSetVisible, gtk, "gtk_widget_set_visible")
 			purego.RegisterLibFunc(&gtkWindowSetDefaultSize, gtk, "gtk_window_set_default_size")
+			purego.RegisterLibFunc(&gtkOverlaySetChild, gtk, "gtk_overlay_set_child")
+			purego.RegisterLibFunc(&gtkOverlayRemoveOverlay, gtk, "gtk_overlay_remove_overlay")
 		} else {
 			purego.RegisterLibFunc(&gtkInitCheck, gtk, "gtk_init_check")
 			purego.RegisterLibFunc(&gtkWindowNew, gtk, "gtk_window_new")
@@ -271,6 +282,12 @@ func ensureInit() error {
 		// Present exists in GTK3 and GTK4 alike, so no version split here.
 		purego.RegisterLibFunc(&gtkWindowPresent, gtk, "gtk_window_present")
 		purego.RegisterLibFunc(&gtkWindowClose, gtk, "gtk_window_close")
+		purego.RegisterLibFunc(&gtkOverlayNew, gtk, "gtk_overlay_new")
+		purego.RegisterLibFunc(&gtkOverlayAddOverlay, gtk, "gtk_overlay_add_overlay")
+		purego.RegisterLibFunc(&gtkSpinnerNew, gtk, "gtk_spinner_new")
+		purego.RegisterLibFunc(&gtkSpinnerStart, gtk, "gtk_spinner_start")
+		purego.RegisterLibFunc(&gtkWidgetSetHalign, gtk, "gtk_widget_set_halign")
+		purego.RegisterLibFunc(&gtkWidgetSetValign, gtk, "gtk_widget_set_valign")
 
 		purego.RegisterLibFunc(&webkitWebViewNew, webkit, "webkit_web_view_new")
 		registerEphemeralFuncs(webkit, gobject)
@@ -352,6 +369,8 @@ func newCallbacks() {
 			return 0
 		}
 		switch event {
+		case webkitLoadStarted:
+			callURL(w.onNavigationStart, cstr(webkitWebViewGetURI(w.webview)))
 		case webkitLoadCommitted:
 			w.revealContent()
 		case webkitLoadFinished:
@@ -382,7 +401,7 @@ func newCallbacks() {
 		w := lookupEngine(userData)
 		if w != nil {
 			uri := cstr(webkitURIRequestGetURI(webkitNavigationActionGetRequest(action)))
-			callNewWindow(w.onNewWindow, uri)
+			callURL(w.onNewWindow, uri)
 		}
 		return 0
 	})
@@ -542,8 +561,12 @@ type webview struct {
 	noBridge   bool
 	// contentHidden is true while HideUntilLoaded holds the web view back.
 	contentHidden bool
-	onNavigation  func(NavigationEvent)
-	onNewWindow   func(string)
+	// overlay holds the web view and, while it is held back, spinner.
+	overlay, spinner uintptr
+	onNavigation     func(NavigationEvent)
+	// onNavigationStart: see Options.OnNavigationStart.
+	onNavigationStart func(string)
+	onNewWindow       func(string)
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
 	// so that navigation is reported once, as a failure.
 	loadFailed bool
@@ -787,17 +810,18 @@ func NewWithOptions(opts Options) (WebView, error) {
 	})
 
 	w := &webview{
-		ownsWindow:     true,
-		bindings:       map[string]func(id, req string) (any, error){},
-		schemeHandlers: opts.SchemeHandlers,
-		noBridge:       opts.NoBridge,
-		contentHidden:  opts.HideUntilLoaded,
-		onNavigation:   opts.OnNavigation,
-		onNewWindow:    opts.OnNewWindow,
-		onDownload:     opts.OnDownload,
-		onDownloadEnd:  opts.OnDownloadDone,
-		downloads:      map[uintptr]*download{},
-		wantEphemeral:  opts.Ephemeral,
+		ownsWindow:        true,
+		bindings:          map[string]func(id, req string) (any, error){},
+		schemeHandlers:    opts.SchemeHandlers,
+		noBridge:          opts.NoBridge,
+		contentHidden:     opts.HideUntilLoaded,
+		onNavigation:      opts.OnNavigation,
+		onNavigationStart: opts.OnNavigationStart,
+		onNewWindow:       opts.OnNewWindow,
+		onDownload:        opts.OnDownload,
+		onDownloadEnd:     opts.OnDownloadDone,
+		downloads:         map[uintptr]*download{},
+		wantEphemeral:     opts.Ephemeral,
 	}
 	w.id = registerEngine(w)
 	err = w.windowInit(uintptr(opts.Window))
@@ -847,7 +871,7 @@ func (w *webview) windowInit(window uintptr) error {
 	}
 	gObjectRefSink(w.webview)
 	w.manager = webkitWebViewGetUserContentManager(w.webview)
-	if w.contentHidden || w.onNavigation != nil {
+	if w.contentHidden || w.onNavigation != nil || w.onNavigationStart != nil {
 		gSignalConnectData(w.webview, "load-changed", loadChangedFn, w.id, 0, 0)
 	}
 	if w.onNewWindow != nil {
@@ -892,6 +916,7 @@ func (w *webview) onWindowDestroy() {
 	// later Destroy() is fine; signal callbacks resolve to nil and no-op.
 	unregisterEngine(w.id)
 	w.window = 0
+	w.overlay, w.spinner = 0, 0 // destroyed with the window
 	dispatchMain(func() { w.stopRunLoop = true })
 }
 
@@ -929,6 +954,7 @@ func (w *webview) Destroy() {
 		}
 		gObjectUnref(w.webview)
 		w.webview = 0
+		w.overlay, w.spinner = 0, 0
 	}
 	if w.ephemeral != 0 {
 		gObjectUnref(w.ephemeral)
@@ -1054,11 +1080,15 @@ func (w *webview) windowShow() {
 	if w.isWindowShown {
 		return
 	}
+	child := w.webview
+	if w.contentHidden {
+		child = w.newLoadingOverlay()
+	}
 	if gtk4 {
-		gtkWindowSetChild(w.window, w.webview)
+		gtkWindowSetChild(w.window, child)
 		gtkWidgetSetVisible(w.webview, !w.contentHidden)
 	} else {
-		gtkContainerAdd(w.window, w.webview)
+		gtkContainerAdd(w.window, child)
 		if !w.contentHidden {
 			gtkWidgetShow(w.webview)
 		}
@@ -1193,6 +1223,58 @@ func (w *webview) resolve(id string, status int, resultJSON string) {
 	dispatchMain(func() { w.Eval(js) })
 }
 
+// newLoadingOverlay puts the held-back web view under an overlay whose
+// spinner shows after spinnerDelay, so a slow first page does not look like
+// a window that is doing nothing.
+func (w *webview) newLoadingOverlay() uintptr {
+	w.overlay = gtkOverlayNew()
+	w.spinner = gtkSpinnerNew()
+	gtkWidgetSetSizeRequest(w.spinner, 32, 32)
+	gtkWidgetSetHalign(w.spinner, gtkAlignCenter)
+	gtkWidgetSetValign(w.spinner, gtkAlignCenter)
+	gtkSpinnerStart(w.spinner)
+	if gtk4 {
+		gtkWidgetSetVisible(w.spinner, false)
+		gtkOverlaySetChild(w.overlay, w.webview)
+	} else {
+		gtkContainerAdd(w.overlay, w.webview)
+		gtkWidgetShow(w.overlay)
+	}
+	gtkOverlayAddOverlay(w.overlay, w.spinner)
+	time.AfterFunc(spinnerDelay, func() { dispatchMain(w.showSpinner) })
+	return w.overlay
+}
+
+func (w *webview) showSpinner() {
+	if w.spinner == 0 {
+		return
+	}
+	if gtk4 {
+		gtkWidgetSetVisible(w.spinner, true)
+		return
+	}
+	gtkWidgetShow(w.spinner)
+}
+
+// removeSpinner drops the spinner; the overlay stays, holding the web view.
+func (w *webview) removeSpinner() {
+	if w.spinner == 0 {
+		return
+	}
+	if gtk4 {
+		gtkOverlayRemoveOverlay(w.overlay, w.spinner)
+	} else {
+		gtkContainerRemove(w.overlay, w.spinner)
+	}
+	w.spinner = 0
+}
+
+// GTK_ALIGN_CENTER
+const gtkAlignCenter = 3
+
+// WEBKIT_LOAD_STARTED
+const webkitLoadStarted = 0
+
 // WEBKIT_LOAD_COMMITTED: WebKitGTK draws nothing between it and the page's
 // first paint (the window background shows through), so a view held back by
 // HideUntilLoaded can show here instead of waiting for every subresource.
@@ -1209,6 +1291,7 @@ func (w *webview) revealContent() {
 		return
 	}
 	w.contentHidden = false
+	w.removeSpinner()
 	if !w.isWindowShown {
 		return // windowShow will show it with the right visibility
 	}
