@@ -28,6 +28,7 @@ var (
 	resRichTypes   atomic.Value // string
 	resEmbed       atomic.Value // string
 	resDialogCfg   atomic.Value // string
+	resPrgname     atomic.Value // string
 )
 
 // hasDisplay reports whether a windowing system is available.
@@ -66,6 +67,7 @@ func TestMain(m *testing.M) {
 		resNoDownloadHandler.Store(noDownloadHandlerScenario())
 		resCookies.Store(cookiesScenario())
 		resClipboard.Store(clipboardScenario())
+		resPrgname.Store("name=" + cstr(gGetPrgname())) // never "": unset must fail, not skip
 	}
 	os.Exit(m.Run())
 }
@@ -405,5 +407,16 @@ func TestCookiesPersist(t *testing.T) {
 	requireGUI(t, got)
 	if got != "cookies.sqlite in the data dir: true" {
 		t.Fatal(got)
+	}
+}
+
+// GTK4 names the window after the program name, which gtk_init without argv
+// leaves unset; glaze sets it from argv[0].
+func TestProgramNameNamesTheWindow(t *testing.T) {
+	got, _ := resPrgname.Load().(string)
+	requireGUI(t, got)
+	want := "name=" + filepath.Base(os.Args[0])
+	if got != want {
+		t.Fatalf("g_get_prgname = %q, want %q", got, want)
 	}
 }

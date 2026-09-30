@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -57,6 +58,8 @@ var (
 	gIdleAddFull                     func(priority int, function, data, notify uintptr) uint32
 	gMainContextIteration            func(context uintptr, mayBlock bool) bool
 	gFree                            func(ptr uintptr)
+	gGetPrgname                      func() uintptr
+	gSetPrgname                      func(name string)
 	gObjectRefSink                   func(obj uintptr) uintptr
 	gObjectUnref                     func(obj uintptr)
 	gSignalConnectData               func(instance uintptr, signal string, handler, data, destroy uintptr, flags int) uint64
@@ -238,6 +241,8 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&gIdleAddFull, glib, "g_idle_add_full")
 		purego.RegisterLibFunc(&gMainContextIteration, glib, "g_main_context_iteration")
 		purego.RegisterLibFunc(&gFree, glib, "g_free")
+		purego.RegisterLibFunc(&gGetPrgname, glib, "g_get_prgname")
+		purego.RegisterLibFunc(&gSetPrgname, glib, "g_set_prgname")
 		purego.RegisterLibFunc(&gObjectRefSink, gobject, "g_object_ref_sink")
 		purego.RegisterLibFunc(&gObjectUnref, gobject, "g_object_unref")
 		purego.RegisterLibFunc(&gSignalConnectData, gobject, "g_signal_connect_data")
@@ -438,6 +443,12 @@ func jsResultToString(arg uintptr) string {
 // gtkInit, gtkNewWindow and registerScriptHandler hide the GTK3/GTK4 call-arity
 // differences.
 func gtkInit() bool {
+	// GTK4 names the window (X11 WM_CLASS, Wayland app_id) only after the
+	// program name, and gtk_init without argv leaves it unset: the desktop
+	// could not match the window to the app's .desktop file or icon.
+	if gGetPrgname() == 0 {
+		gSetPrgname(filepath.Base(os.Args[0]))
+	}
 	if gtk4 {
 		return gtkInitCheck0()
 	}
