@@ -424,10 +424,12 @@ func handlerInvoke(this, a, b uintptr) uintptr {
 				w.ready = true // CreateController failed synchronously; unblock embed.
 			}
 		} else {
-			w.ready = true // environment creation failed; unblock embed (controller stays 0).
+			w.initHR = int32(a) // #nosec G115 -- an HRESULT is 32 bits
+			w.ready = true      // environment creation failed; unblock embed (controller stays 0).
 		}
 	case kindController:
 		// Invoke(this, HRESULT res, ICoreWebView2Controller* controller)
+		w.initHR = int32(a) // #nosec G115 -- an HRESULT is 32 bits; read only on failure
 		if int32(a) >= 0 && b != 0 {
 			ctrl := asController(b)
 			var wv uintptr
@@ -442,14 +444,16 @@ func handlerInvoke(this, a, b uintptr) uintptr {
 					var token uint64
 					cw.AddWebMessageReceived(handlerPtr(w.msgH), &token)
 				}
-				// Custom-scheme serving: intercept the per-scheme https vhost and
-				// answer from the SchemeHandler (see serveSchemeWindows).
+				// Custom-scheme serving: the schemes were registered with the
+				// environment; intercept their requests and answer from the
+				// SchemeHandler (see serveSchemeWindows). "app:*" rather than
+				// "app*", which would also catch "apple://".
 				if len(w.schemeHandlers) > 0 {
 					w.wrrH = newHandler(w.id, kindWebResourceRequested, &iidWebResourceRequested)
 					var wrrTok uint64
 					cw.AddWebResourceRequested(handlerPtr(w.wrrH), &wrrTok)
 					for scheme := range w.schemeHandlers {
-						cw.AddWebResourceRequestedFilter(utf16(schemeVHost(scheme)+"/*"), 0) // 0 = ALL
+						cw.AddWebResourceRequestedFilter(utf16(scheme+":*"), 0) // 0 = ALL
 					}
 				}
 			}
@@ -485,6 +489,7 @@ func handlerInvoke(this, a, b uintptr) uintptr {
 var (
 	coInitializeEx func(reserved uintptr, coinit uint32) int32
 	coTaskMemFree  func(p uintptr)
+	coTaskMemAlloc func(n uintptr) uintptr
 
 	regOpenKeyExW    func(key uintptr, subkey *uint16, opts, desired uint32, out *uintptr) int32
 	regQueryValueExW func(key uintptr, name *uint16, reserved uintptr, typ *uint32, data *byte, dataLen *uint32) int32
@@ -533,6 +538,7 @@ func ensureCOMInit() error {
 		}
 		reg(&coInitializeEx, ole32, "CoInitializeEx")
 		reg(&coTaskMemFree, ole32, "CoTaskMemFree")
+		reg(&coTaskMemAlloc, ole32, "CoTaskMemAlloc")
 		reg(&regOpenKeyExW, advapi32, "RegOpenKeyExW")
 		reg(&regQueryValueExW, advapi32, "RegQueryValueExW")
 		reg(&regCloseKey, advapi32, "RegCloseKey")
@@ -683,7 +689,8 @@ func regReadString(root uintptr, subkey, name string) (string, error) {
 }
 
 // createEnvironment loads the discovered runtime DLL and calls its
-// CreateWebViewEnvironmentWithOptionsInternal export.
+// CreateWebViewEnvironmentWithOptionsInternal export, registering schemes as
+// custom schemes when there are any (see newEnvOptions).
 //
 // Trade-off (deliberate): this is the internal/undocumented export that
 // WebView2Loader.dll itself wraps, and calling it directly is what lets glaze
@@ -693,13 +700,21 @@ func regReadString(root uintptr, subkey, name string) (string, error) {
 // WebView2Loader.dll, which would have to be shipped alongside the binary. glaze
 // favors the zero-DLL design; if a future Edge runtime drops this export, the
 // GetProcAddress below fails with a clear error rather than misbehaving.
-func createEnvironment(userDataDir string, envHandler *comHandler) error {
+func createEnvironment(userDataDir string, schemes []string, envHandler *comHandler) error {
 	dll, err := findEmbeddedBrowserDLL()
 	if err != nil {
 		dbg("findEmbeddedBrowserDLL: %v", err)
 		return err
 	}
 	dbg("runtime dll: %s", dll)
+	var options uintptr
+	if len(schemes) > 0 {
+		version := runtimeVersion(dll)
+		if !versionBuildAtLeast(version, minSchemeAPIVersion) {
+			return fmt.Errorf("webview2: custom URL schemes need Edge WebView2 Runtime %s or later, found %s (update it)", targetBrowserVersion, version)
+		}
+		options = newEnvOptions(schemes)
+	}
 	mod, err := syscall.LoadLibrary(dll)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", dll, err)
@@ -716,7 +731,7 @@ func createEnvironment(userDataDir string, envHandler *comHandler) error {
 		1, // bool: true
 		0, // runtime_type: installed
 		uintptr(unsafe.Pointer(utf16(userDataDir))),
-		0, // options: null
+		options, // ICoreWebView2EnvironmentOptions*, or null for the defaults
 		handlerPtr(envHandler),
 	)
 	dbg("CreateWebViewEnvironmentWithOptionsInternal -> HRESULT 0x%08X", uint32(r))
@@ -726,13 +741,10 @@ func createEnvironment(userDataDir string, envHandler *comHandler) error {
 	return nil
 }
 
-func userDataFolder() string {
-	base := os.Getenv("APPDATA")
-	if base == "" {
-		base = os.TempDir()
-	}
-	exe, _ := os.Executable()
-	return filepath.Join(base, filepath.Base(exe))
+// runtimeVersion is the version folder a runtime DLL sits in:
+// <root>\<version>\EBWebView\<arch>\EmbeddedBrowserWebView.dll.
+func runtimeVersion(dll string) string {
+	return filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(dll))))
 }
 
 // --- embed + the WebView2-backed WebView methods ---------------------------
@@ -751,8 +763,10 @@ func (w *webview) embed(debug bool) error {
 	w.msgH = newHandler(w.id, kindMessage, &iidMessageReceived)
 	w.scriptH = newHandler(w.id, kindScript, &iidScriptAdded)
 
-	dbg("embed: requesting environment (userDataFolder=%s)", userDataFolder())
-	err = createEnvironment(userDataFolder(), w.envH)
+	schemes := sortedSchemes(w.schemeHandlers)
+	dataDir := userDataFolder(schemes)
+	dbg("embed: requesting environment (userDataFolder=%s, schemes=%v)", dataDir, schemes)
+	err = createEnvironment(dataDir, schemes, w.envH)
 	if err != nil {
 		return err
 	}
@@ -773,7 +787,7 @@ func (w *webview) embed(debug bool) error {
 	}
 	dbg("embed: ready=%v controller=0x%x webview2=0x%x", w.ready, w.controller, w.webview2)
 	if w.controller == 0 || w.webview2 == 0 {
-		return errors.New("webview2: environment/controller creation failed")
+		return fmt.Errorf("webview2: environment/controller creation failed (HRESULT 0x%08X)", uint32(w.initHR)) // #nosec G115 -- printing the HRESULT's bits
 	}
 
 	var settings uintptr
@@ -856,7 +870,6 @@ func (w *webview) Reload()    { w.history(func(c *iCoreWebView2) uintptr { retur
 func (w *webview) Stop()      { w.history(func(c *iCoreWebView2) uintptr { return c.vtbl.Stop }) }
 
 func (w *webview) Navigate(url string) {
-	url = w.rewriteSchemeURL(url) // map a registered scheme:// to its https vhost
 	if w.webview2 == 0 {
 		return
 	}

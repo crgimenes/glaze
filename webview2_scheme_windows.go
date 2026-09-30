@@ -1,16 +1,18 @@
 // Custom-scheme serving for the WebView2 backend.
 //
-// WebView2 has no per-scheme secure-context flag the way WKWebView/WebKitGTK do,
-// so a registered scheme is served over a per-scheme https virtual host
-// (https://<scheme>.localhost) — an https origin is a secure context, and the
-// request never leaves the process: AddWebResourceRequestedFilter + the
-// WebResourceRequested event answer it from the SchemeHandler in memory. Navigate
-// rewrites "<scheme>://.../path" to that vhost so callers use one scheme URL on
-// every platform.
+// A scheme is registered with the environment as a real custom scheme
+// (ICoreWebView2EnvironmentOptions4::GetCustomSchemeRegistrations), marked
+// secure and with an authority, exactly as WKWebView and WebKitGTK register it.
+// So "app://home/index.html" is the document's real URL: its origin is
+// app://home, and absolute "app://home/..." sub-resources inside it resolve and
+// load. The request never leaves the process: AddWebResourceRequestedFilter +
+// the WebResourceRequested event answer it from the SchemeHandler in memory.
 package glaze
 
 import (
-	"net/url"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,9 +20,6 @@ import (
 
 	"github.com/ebitengine/purego"
 )
-
-// schemeVHost is the secure https origin a custom scheme is served from.
-func schemeVHost(scheme string) string { return "https://" + scheme + ".localhost" }
 
 // --- COM wrappers for the WebResourceRequested event -----------------------
 
@@ -122,19 +121,11 @@ func (w *webview) serveScheme(scheme, requestURL string) *SchemeResponse {
 	return callSchemeHandler(h, &SchemeRequest{URL: requestURL})
 }
 
-// schemeForVHostURL returns the registered scheme whose vhost matches uri, or "".
-func (w *webview) schemeForVHostURL(uri string) string {
-	for scheme := range w.schemeHandlers {
-		if strings.HasPrefix(uri, schemeVHost(scheme)+"/") {
-			return scheme
-		}
-	}
-	return ""
-}
-
 // serveSchemeWindows answers one WebResourceRequested event from the matching
-// SchemeHandler. A nil response is left for WebView2 to turn into its default
-// 404 (put no response).
+// SchemeHandler. The request URI is already the scheme URL the page used
+// ("app://home/app.js"), so it goes to the handler unchanged, as on macOS and
+// Linux. A nil response is left for WebView2 to turn into its default 404 (put
+// no response).
 func (w *webview) serveSchemeWindows(args uintptr) {
 	a := asWRRArgs(args)
 	var reqPtr uintptr
@@ -149,11 +140,11 @@ func (w *webview) serveSchemeWindows(args uintptr) {
 	uri := wideToString(uriPtr)
 	coTaskMemFree(uriPtr)
 
-	scheme := w.schemeForVHostURL(uri)
-	if scheme == "" {
+	scheme, _, found := strings.Cut(uri, ":")
+	if !found {
 		return
 	}
-	resp := w.serveScheme(scheme, w.canonicalSchemeURL(scheme, uri))
+	resp := w.serveScheme(scheme, uri)
 	if resp == nil || w.environment == 0 {
 		return
 	}
@@ -176,63 +167,342 @@ func (w *webview) serveSchemeWindows(args uintptr) {
 	a.PutResponse(respObj)
 }
 
-// rewriteSchemeURL maps a registered "<scheme>://.../path" URL to its https
-// vhost so a single scheme URL works on every platform; other URLs pass through.
-func (w *webview) rewriteSchemeURL(raw string) string {
-	if len(w.schemeHandlers) == 0 {
-		return raw
+// sortedSchemes returns the registered scheme names in a stable order, so the
+// same handlers always produce the same registrations and the same folder.
+func sortedSchemes(handlers map[string]SchemeHandler) []string {
+	names := make([]string, 0, len(handlers))
+	for name := range handlers {
+		names = append(names, name)
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return raw
-	}
-	_, ok := w.schemeHandlers[u.Scheme]
-	if !ok {
-		return raw
-	}
-	// The vhost origin has no place for the scheme's authority, so remember it
-	// here; serveSchemeWindows uses it to rebuild the original URL for the
-	// handler (the other backends preserve the authority natively).
-	if u.Host != "" {
-		w.mu.Lock()
-		if w.schemeAuthority == nil {
-			w.schemeAuthority = map[string]string{}
-		}
-		w.schemeAuthority[u.Scheme] = u.Host
-		w.mu.Unlock()
-	}
-	out := schemeVHost(u.Scheme) + u.Path
-	if u.RawQuery != "" {
-		out += "?" + u.RawQuery
-	}
-	// Preserve the fragment: it is client-side (never sent to the handler), but
-	// dropping it here would break hash/path routing on the initial Navigate.
-	if u.Fragment != "" {
-		out += "#" + u.EscapedFragment()
-	}
-	return out
+	slices.Sort(names)
+	return names
 }
 
-// canonicalSchemeURL turns the internal https vhost URL WebView2 delivers back
-// into the "<scheme>://<authority>/path?query" form the macOS/Linux backends
-// pass to a handler, so SchemeRequest.URL has one shape on every platform. The
-// authority is the one the app navigated with (recorded in rewriteSchemeURL),
-// falling back to the scheme name if none was seen. Fragments are client-side
-// and never reach a resource request, so none is reconstructed.
-func (w *webview) canonicalSchemeURL(scheme, vhostURL string) string {
-	u, err := url.Parse(vhostURL)
+// userDataFolder is where WebView2 keeps the profile. Every environment that
+// shares a browser process must be created with identical custom-scheme
+// registrations, or creation fails; environments share the browser process
+// when they share this folder. So a window registering schemes gets a folder
+// named for exactly those schemes, and a window without any keeps the
+// original folder unchanged. The storage this splits is per-origin anyway,
+// and an app:// origin only exists in windows that register it.
+func userDataFolder(schemes []string) string {
+	base := os.Getenv("APPDATA")
+	if base == "" {
+		base = os.TempDir()
+	}
+	exe, _ := os.Executable()
+	name := filepath.Base(exe)
+	if len(schemes) > 0 {
+		name += "-schemes-" + strings.Join(schemes, "-")
+	}
+	return filepath.Join(base, name)
+}
+
+// --- environment options: real custom-scheme registration ------------------
+//
+// WebView2 reads custom schemes from the options object passed when the
+// environment is created. The SDK's options class is C++ in a header
+// (WebView2EnvironmentOptions.h), so glaze implements the three interfaces the
+// runtime reads -- ICoreWebView2EnvironmentOptions, ...Options4 and
+// ICoreWebView2CustomSchemeRegistration -- as read-only COM objects over Go
+// vtables. They live for the life of the process (kept in envOptionsCache),
+// so AddRef/Release do not count.
+
+var (
+	iidEnvironmentOptions  = guid{0x2FDE08A8, 0x1E9A, 0x4766, [8]byte{0x8C, 0x05, 0x95, 0xA9, 0xCE, 0xB9, 0xD1, 0xC5}}
+	iidEnvironmentOptions4 = guid{0xAC52D13F, 0x0D38, 0x475A, [8]byte{0x9D, 0xCA, 0x87, 0x65, 0x80, 0xD6, 0x79, 0x3E}}
+	iidCustomSchemeReg     = guid{0xD60AC92C, 0x37A6, 0x4B26, [8]byte{0xA3, 0x9E, 0x95, 0xCF, 0xE5, 0x90, 0x47, 0xBB}}
+)
+
+const (
+	// targetBrowserVersion is CORE_WEBVIEW_TARGET_PRODUCT_VERSION of WebView2
+	// SDK 1.0.1587.40, the first stable SDK with custom-scheme registration;
+	// the SDK's own options object reports its version here.
+	targetBrowserVersion = "110.0.1587.40"
+	// minSchemeAPIVersion is that runtime's build number. An older runtime
+	// would ignore the registrations and the scheme would silently not load,
+	// so NewWithOptions refuses it instead.
+	minSchemeAPIVersion = 1587
+
+	hrOK          = 0
+	hrNotImpl     = 0x80004001 // E_NOTIMPL
+	hrNoInterface = 0x80004002 // E_NOINTERFACE
+	hrPointer     = 0x80004003 // E_POINTER
+	hrOutOfMemory = 0x8007000E // E_OUTOFMEMORY
+)
+
+type envOptionsVtbl struct {
+	iUnknownVtbl
+	GetAdditionalBrowserArguments             uintptr
+	PutAdditionalBrowserArguments             uintptr
+	GetLanguage                               uintptr
+	PutLanguage                               uintptr
+	GetTargetCompatibleBrowserVersion         uintptr
+	PutTargetCompatibleBrowserVersion         uintptr
+	GetAllowSingleSignOnUsingOSPrimaryAccount uintptr
+	PutAllowSingleSignOnUsingOSPrimaryAccount uintptr
+}
+
+type envOptions4Vtbl struct {
+	iUnknownVtbl
+	GetCustomSchemeRegistrations uintptr
+	SetCustomSchemeRegistrations uintptr
+}
+
+type schemeRegVtbl struct {
+	iUnknownVtbl
+	GetSchemeName            uintptr
+	GetTreatAsSecure         uintptr
+	PutTreatAsSecure         uintptr
+	GetAllowedOrigins        uintptr
+	SetAllowedOrigins        uintptr
+	GetHasAuthorityComponent uintptr
+	PutHasAuthorityComponent uintptr
+}
+
+// envOptions is ICoreWebView2EnvironmentOptions; o4 is the same object's
+// ICoreWebView2EnvironmentOptions4. Both answer QueryInterface for either, and
+// both return envOptions for IUnknown, so COM identity holds. The vtbl
+// pointer must stay the first field of each.
+type envOptions struct {
+	vtbl *envOptionsVtbl
+	o4   *envOptions4
+	regs []*schemeReg
+}
+
+type envOptions4 struct {
+	vtbl *envOptions4Vtbl
+	base *envOptions
+}
+
+// schemeReg is one ICoreWebView2CustomSchemeRegistration.
+type schemeReg struct {
+	vtbl   *schemeRegVtbl
+	scheme string
+}
+
+var (
+	envOptionsVtblOnce sync.Once
+	envOptionsVtblPtr  *envOptionsVtbl
+	envOptions4VtblPtr *envOptions4Vtbl
+	schemeRegVtblPtr   *schemeRegVtbl
+
+	envOptionsMu    sync.Mutex
+	envOptionsCache = map[string]*envOptions{}
+)
+
+// newEnvOptions returns the options object registering schemes: secure, with
+// an authority (so app://home is an origin, like http://home), and reachable
+// from any origin of the same scheme (so a same-origin POST, which always
+// carries an Origin header, is allowed; https pages are not). The object is
+// cached per scheme set: WebView2 requires identical registrations wherever a
+// browser process is shared.
+func newEnvOptions(schemes []string) uintptr {
+	envOptionsVtblOnce.Do(func() {
+		addRef := purego.NewCallback(staticAddRef)
+		release := purego.NewCallback(staticRelease)
+		notImpl1 := purego.NewCallback(comNotImpl1)
+		notImpl2 := purego.NewCallback(comNotImpl2)
+		getFalse := purego.NewCallback(comGetFalse)
+		getTrue := purego.NewCallback(comGetTrue)
+		getNull := purego.NewCallback(comGetNullString)
+		envOptionsVtblPtr = &envOptionsVtbl{
+			iUnknownVtbl:                              iUnknownVtbl{purego.NewCallback(envOptionsQI), addRef, release},
+			GetAdditionalBrowserArguments:             getNull,
+			PutAdditionalBrowserArguments:             notImpl1,
+			GetLanguage:                               getNull,
+			PutLanguage:                               notImpl1,
+			GetTargetCompatibleBrowserVersion:         purego.NewCallback(envOptionsTargetVersion),
+			PutTargetCompatibleBrowserVersion:         notImpl1,
+			GetAllowSingleSignOnUsingOSPrimaryAccount: getFalse,
+			PutAllowSingleSignOnUsingOSPrimaryAccount: notImpl1,
+		}
+		envOptions4VtblPtr = &envOptions4Vtbl{
+			iUnknownVtbl:                 iUnknownVtbl{purego.NewCallback(envOptions4QI), addRef, release},
+			GetCustomSchemeRegistrations: purego.NewCallback(envOptionsRegistrations),
+			SetCustomSchemeRegistrations: notImpl2,
+		}
+		schemeRegVtblPtr = &schemeRegVtbl{
+			iUnknownVtbl:             iUnknownVtbl{purego.NewCallback(schemeRegQI), addRef, release},
+			GetSchemeName:            purego.NewCallback(schemeRegName),
+			GetTreatAsSecure:         getTrue,
+			PutTreatAsSecure:         notImpl1,
+			GetAllowedOrigins:        purego.NewCallback(schemeRegAllowedOrigins),
+			SetAllowedOrigins:        notImpl2,
+			GetHasAuthorityComponent: getTrue,
+			PutHasAuthorityComponent: notImpl1,
+		}
+	})
+
+	key := strings.Join(schemes, "\x00")
+	envOptionsMu.Lock()
+	defer envOptionsMu.Unlock()
+	o := envOptionsCache[key]
+	if o == nil {
+		o = &envOptions{vtbl: envOptionsVtblPtr}
+		o.o4 = &envOptions4{vtbl: envOptions4VtblPtr, base: o}
+		for _, s := range schemes {
+			o.regs = append(o.regs, &schemeReg{vtbl: schemeRegVtblPtr, scheme: s})
+		}
+		envOptionsCache[key] = o
+	}
+	return uintptr(unsafe.Pointer(o)) // #nosec G103 -- process-lifetime COM object (envOptionsCache)
+}
+
+// setOut writes a pointer-sized value through a COM out-parameter.
+func setOut(out, v uintptr) { *(*uintptr)(ptr(out)) = v }
+
+// coTaskMemUTF16 copies s into CoTaskMemAlloc'd UTF-16: COM out-strings are
+// freed by the caller with CoTaskMemFree. 0 on failure.
+func coTaskMemUTF16(s string) uintptr {
+	u, err := syscall.UTF16FromString(s)
 	if err != nil {
-		return vhostURL
+		return 0
 	}
-	w.mu.Lock()
-	authority := w.schemeAuthority[scheme]
-	w.mu.Unlock()
-	if authority == "" {
-		authority = scheme
+	p := coTaskMemAlloc(uintptr(len(u)) * 2)
+	if p == 0 {
+		return 0
 	}
-	out := scheme + "://" + authority + u.Path
-	if u.RawQuery != "" {
-		out += "?" + u.RawQuery
+	copy(unsafe.Slice((*uint16)(ptr(p)), len(u)), u) // #nosec G103 -- fills the CoTaskMemAlloc buffer sized above
+	return p
+}
+
+// coTaskMemPtrs copies ptrs into a CoTaskMemAlloc'd array the caller frees.
+func coTaskMemPtrs(ptrs []uintptr) uintptr {
+	p := coTaskMemAlloc(uintptr(len(ptrs)) * unsafe.Sizeof(uintptr(0)))
+	if p == 0 {
+		return 0
 	}
-	return out
+	copy(unsafe.Slice((*uintptr)(ptr(p)), len(ptrs)), ptrs) // #nosec G103 -- fills the CoTaskMemAlloc buffer sized above
+	return p
+}
+
+func envOptionsQI(this, riid, ppv uintptr) uintptr {
+	return optionsQueryInterface((*envOptions)(ptr(this)), riid, ppv)
+}
+
+func envOptions4QI(this, riid, ppv uintptr) uintptr {
+	return optionsQueryInterface((*envOptions4)(ptr(this)).base, riid, ppv)
+}
+
+func optionsQueryInterface(o *envOptions, riid, ppv uintptr) uintptr {
+	if ppv == 0 {
+		return hrPointer
+	}
+	want := (*guid)(ptr(riid))
+	switch {
+	case guidEqual(want, &iidIUnknown), guidEqual(want, &iidEnvironmentOptions):
+		setOut(ppv, uintptr(unsafe.Pointer(o))) // #nosec G103 -- process-lifetime COM object
+	case guidEqual(want, &iidEnvironmentOptions4):
+		setOut(ppv, uintptr(unsafe.Pointer(o.o4))) // #nosec G103 -- process-lifetime COM object
+	default:
+		// Options2/3/5+ are not implemented: the runtime then uses its
+		// defaults, as it does for any option glaze does not set.
+		setOut(ppv, 0)
+		return hrNoInterface
+	}
+	return hrOK
+}
+
+func schemeRegQI(this, riid, ppv uintptr) uintptr {
+	if ppv == 0 {
+		return hrPointer
+	}
+	want := (*guid)(ptr(riid))
+	if guidEqual(want, &iidIUnknown) || guidEqual(want, &iidCustomSchemeReg) {
+		setOut(ppv, this)
+		return hrOK
+	}
+	setOut(ppv, 0)
+	return hrNoInterface
+}
+
+func staticAddRef(uintptr) uintptr  { return 2 }
+func staticRelease(uintptr) uintptr { return 1 }
+
+// The objects are read-only: glaze builds them, the runtime only reads them.
+func comNotImpl1(_, _ uintptr) uintptr    { return hrNotImpl }
+func comNotImpl2(_, _, _ uintptr) uintptr { return hrNotImpl }
+
+func comGetBool(out uintptr, v int32) uintptr {
+	if out == 0 {
+		return hrPointer
+	}
+	*(*int32)(ptr(out)) = v // BOOL
+	return hrOK
+}
+
+func comGetFalse(_, out uintptr) uintptr { return comGetBool(out, 0) }
+func comGetTrue(_, out uintptr) uintptr  { return comGetBool(out, 1) }
+
+// comGetNullString reports an unset string option, as the SDK's options
+// object does for one never put.
+func comGetNullString(_, out uintptr) uintptr {
+	if out == 0 {
+		return hrPointer
+	}
+	setOut(out, 0)
+	return hrOK
+}
+
+func comGetString(out uintptr, s string) uintptr {
+	if out == 0 {
+		return hrPointer
+	}
+	p := coTaskMemUTF16(s)
+	if p == 0 {
+		return hrOutOfMemory
+	}
+	setOut(out, p)
+	return hrOK
+}
+
+func envOptionsTargetVersion(_, out uintptr) uintptr {
+	return comGetString(out, targetBrowserVersion)
+}
+
+// envOptionsRegistrations is GetCustomSchemeRegistrations: an allocated array
+// of registration pointers, which the caller releases (a no-op here) and frees.
+func envOptionsRegistrations(this, count, out uintptr) uintptr {
+	if count == 0 || out == 0 {
+		return hrPointer
+	}
+	o := (*envOptions4)(ptr(this)).base
+	ptrs := make([]uintptr, len(o.regs))
+	for i, r := range o.regs {
+		ptrs[i] = uintptr(unsafe.Pointer(r)) // #nosec G103 -- process-lifetime COM object
+	}
+	arr := coTaskMemPtrs(ptrs)
+	if arr == 0 {
+		return hrOutOfMemory
+	}
+	*(*uint32)(ptr(count)) = uint32(len(ptrs)) // #nosec G115 -- one per registered scheme
+	setOut(out, arr)
+	return hrOK
+}
+
+func schemeRegName(this, out uintptr) uintptr {
+	return comGetString(out, (*schemeReg)(ptr(this)).scheme)
+}
+
+// schemeRegAllowedOrigins is GetAllowedOrigins: "<scheme>://*", every origin
+// of this scheme. Requests without an Origin header (navigations, <script>,
+// <img>, <link>) are always allowed; this admits the ones with one, such as a
+// same-origin POST, which macOS and Linux allow too.
+func schemeRegAllowedOrigins(this, count, out uintptr) uintptr {
+	if count == 0 || out == 0 {
+		return hrPointer
+	}
+	origin := coTaskMemUTF16((*schemeReg)(ptr(this)).scheme + "://*")
+	if origin == 0 {
+		return hrOutOfMemory
+	}
+	arr := coTaskMemPtrs([]uintptr{origin})
+	if arr == 0 {
+		coTaskMemFree(origin)
+		return hrOutOfMemory
+	}
+	*(*uint32)(ptr(count)) = 1
+	setOut(out, arr)
+	return hrOK
 }

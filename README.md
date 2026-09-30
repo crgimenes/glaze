@@ -245,12 +245,15 @@ Handlers are supplied at construction (not added later) because macOS bakes the
 scheme handlers into the `WKWebViewConfiguration` before the `WKWebView` exists.
 `New`/`NewWindow` delegate to `NewWithOptions`, so existing code is unaffected.
 
-Each backend uses its own native mechanism: macOS a `WKURLSchemeHandler`; Linux
-`webkit_web_context_register_uri_scheme` marked secure. **Windows** has no
-per-scheme secure flag, so the scheme is served over a per-scheme
-`https://<scheme>.localhost` virtual host (an https origin is a secure context)
-and `Navigate` rewrites `<scheme>://…` to it -- so your handler and your
-`Navigate` URLs use the one `scheme://` form on every platform. See
+Each backend uses its own native mechanism, and each registers a real scheme:
+macOS a `WKURLSchemeHandler`; Linux `webkit_web_context_register_uri_scheme`
+marked secure; Windows a WebView2 custom scheme registration (secure, with an
+authority; needs Edge WebView2 Runtime 110 or later). So `app://home` is the
+page's origin on every platform, absolute `app://home/...` links and
+sub-resources load everywhere, and your handler sees the same URL everywhere.
+On Windows a window that registers schemes keeps its WebView2 profile in a
+folder named for them (`%APPDATA%\<exe>-schemes-app`), because WebView2
+requires windows sharing a profile to register identical schemes. See
 [examples/scheme](examples/scheme/).
 
 ### Untrusted content: no bridge

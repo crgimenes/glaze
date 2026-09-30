@@ -56,6 +56,7 @@ func TestMain(m *testing.M) {
 		resWinDialogCfg.Store(winDialogConfigScenario())
 		resNoBridge.Store(noBridgeScenario())
 		resWinOnClose.Store(winOnCloseScenario())
+		resWinScheme.Store(winSchemeScenario())
 		resWinClose.Store(winCloseViaUIScenario()) // last: it ends with WM_QUIT
 	}
 	os.Exit(m.Run())

@@ -410,18 +410,13 @@ type webview struct {
 	scriptH     *comHandler
 	wrrH        *comHandler // WebResourceRequested handler (custom schemes); nil if none
 	ready       bool
+	initHR      int32 // failing HRESULT of environment/controller creation, for the error
 	scriptDone  bool
 	lastScript  string
 
 	// schemeHandlers serve the app's assets from a custom secure origin instead
 	// of a loopback server; empty unless set via NewWithOptions.
 	schemeHandlers map[string]SchemeHandler
-	// schemeAuthority remembers the authority a scheme was navigated with (the
-	// https vhost the request is served over drops it), so serveSchemeWindows can
-	// rebuild the original "<scheme>://<authority>/..." URL the handler sees on
-	// every platform. Written in rewriteSchemeURL, read in serveSchemeWindows;
-	// guarded by mu.
-	schemeAuthority map[string]string
 
 	noBridge bool
 	onClose  func()
@@ -464,7 +459,7 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 }
 
 // NewWithOptions creates a web view configured by opts, including any custom
-// SchemeHandlers (served over a per-scheme https virtual host; see
+// SchemeHandlers (registered with WebView2 as secure custom schemes; see
 // webview2_scheme_windows.go).
 func NewWithOptions(opts Options) (WebView, error) {
 	err := ensureWinInit()
@@ -477,13 +472,12 @@ func NewWithOptions(opts Options) (WebView, error) {
 	})
 
 	w := &webview{
-		ownsWindow:      opts.Window == nil,
-		bindings:        map[string]func(id, req string) (any, error){},
-		dispatchMap:     map[uintptr]func(){},
-		schemeHandlers:  opts.SchemeHandlers,
-		schemeAuthority: map[string]string{},
-		noBridge:        opts.NoBridge,
-		onClose:         opts.OnClose,
+		ownsWindow:     opts.Window == nil,
+		bindings:       map[string]func(id, req string) (any, error){},
+		dispatchMap:    map[uintptr]func(){},
+		schemeHandlers: opts.SchemeHandlers,
+		noBridge:       opts.NoBridge,
+		onClose:        opts.OnClose,
 	}
 	window := opts.Window
 	debug := opts.Debug
