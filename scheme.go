@@ -107,6 +107,12 @@ type Options struct {
 	// Called on the UI thread. macOS only: elsewhere the URL comes as a
 	// command-line argument.
 	OnOpenURLs func(urls []string)
+
+	// Ephemeral keeps the web view's website data -- cookies, local storage,
+	// cache -- in memory only: it starts with nothing from earlier runs and
+	// leaves nothing behind. Each ephemeral web view gets its own store.
+	// macOS and Linux; ignored on Windows.
+	Ephemeral bool
 }
 
 // schemeMIME returns a response's MIME type or the octet-stream default.

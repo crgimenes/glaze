@@ -13,7 +13,6 @@
 package menu
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -158,7 +157,10 @@ func handleKey(id uintptr, keyval, state uint32) uintptr {
 
 func set(items []Item, opts Options) (*Menu, error) {
 	if opts.Window == nil {
-		return nil, errors.New("menu: Linux needs Options.Window (the GtkWindow)")
+		// No GtkWindow to hold the shortcuts (an Ebitengine window, say): the
+		// same as no menu support at all, so callers that skip ErrUnsupported
+		// keep doing so.
+		return nil, fmt.Errorf("menu: no GtkWindow in Options.Window: %w", ErrUnsupported)
 	}
 	err := ensureInit()
 	if err != nil {

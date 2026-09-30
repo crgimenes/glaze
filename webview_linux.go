@@ -86,6 +86,7 @@ var (
 	webkitRegisterHandler3  func(manager uintptr, name string, world uintptr)
 
 	webkitWebViewNew                              func() uintptr
+	webkitWebViewNewEphemeral                     func() (webview, source uintptr) // set in registerEphemeralFuncs
 	webkitWebViewGetUserContentManager            func(webview uintptr) uintptr
 	webkitWebViewGetSettings                      func(webview uintptr) uintptr
 	webkitSettingsSetJavascriptCanAccessClipboard func(settings uintptr, enabled bool)
@@ -267,6 +268,7 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&gtkWindowClose, gtk, "gtk_window_close")
 
 		purego.RegisterLibFunc(&webkitWebViewNew, webkit, "webkit_web_view_new")
+		registerEphemeralFuncs(webkit, gobject)
 		purego.RegisterLibFunc(&webkitWebViewGetUserContentManager, webkit, "webkit_web_view_get_user_content_manager")
 		purego.RegisterLibFunc(&webkitWebViewGetSettings, webkit, "webkit_web_view_get_settings")
 		purego.RegisterLibFunc(&webkitSettingsSetJavascriptCanAccessClipboard, webkit, "webkit_settings_set_javascript_can_access_clipboard")
@@ -534,6 +536,11 @@ type webview struct {
 
 	findController uintptr // connected on first Find
 
+	// ephemeral is the in-memory WebKitWebContext (4.x) or WebKitNetworkSession
+	// (6.0) of an Options.Ephemeral web view, released after it.
+	ephemeral     uintptr
+	wantEphemeral bool
+
 	onDownload    func(string) string
 	onDownloadEnd func(string, error)
 	downloads     map[uintptr]*download // GTK thread only
@@ -679,10 +686,11 @@ func (w *webview) registerSchemes() error {
 		})
 	})
 	for scheme := range w.schemeHandlers {
-		if schemesRegistered[scheme] {
+		key := contextScheme{ctx, scheme}
+		if schemesRegistered[key] {
 			continue
 		}
-		schemesRegistered[scheme] = true
+		schemesRegistered[key] = true
 		registerScheme(ctx, scheme, schemeCB, 0, 0)
 		registerAsSecure(sm, scheme)
 	}
@@ -692,9 +700,15 @@ func (w *webview) registerSchemes() error {
 var (
 	schemeCBOnce sync.Once
 	schemeCB     uintptr
-	// schemesRegistered is touched only on the GTK thread.
-	schemesRegistered = map[string]bool{}
+	// schemesRegistered is touched only on the GTK thread. A scheme lives on a
+	// WebKitWebContext: the shared default one, or an ephemeral web view's own.
+	schemesRegistered = map[contextScheme]bool{}
 )
+
+type contextScheme struct {
+	ctx    uintptr
+	scheme string
+}
 
 func engineForWebView(p uintptr) *webview {
 	if p == 0 {
@@ -766,6 +780,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		onDownload:     opts.OnDownload,
 		onDownloadEnd:  opts.OnDownloadDone,
 		downloads:      map[uintptr]*download{},
+		wantEphemeral:  opts.Ephemeral,
 	}
 	w.id = registerEngine(w)
 	err = w.windowInit(uintptr(opts.Window))
@@ -808,7 +823,11 @@ func (w *webview) windowInit(window uintptr) error {
 		gSignalConnectData(w.window, "destroy", windowDestroyFn, w.id, 0, 0)
 	}
 
-	w.webview = webkitWebViewNew()
+	if w.wantEphemeral {
+		w.webview, w.ephemeral = webkitWebViewNewEphemeral()
+	} else {
+		w.webview = webkitWebViewNew()
+	}
 	gObjectRefSink(w.webview)
 	w.manager = webkitWebViewGetUserContentManager(w.webview)
 	if w.contentHidden || w.onNavigation != nil {
@@ -893,6 +912,10 @@ func (w *webview) Destroy() {
 		}
 		gObjectUnref(w.webview)
 		w.webview = 0
+	}
+	if w.ephemeral != 0 {
+		gObjectUnref(w.ephemeral)
+		w.ephemeral = 0
 	}
 	unregisterEngine(w.id)
 	if w.ownsWindow {
@@ -1252,16 +1275,18 @@ type download struct {
 }
 
 // downloadsWatched: downloads come from the WebKitWebContext (4.x) or
-// WebKitNetworkSession (6.0), which every web view shares, so the signal is
-// connected once and each download finds its web view.
-var downloadsWatched bool
+// WebKitNetworkSession (6.0) -- the shared default one, or an ephemeral web
+// view's own -- so the signal is connected once per source and each download
+// finds its web view. GTK thread only.
+var downloadsWatched = map[uintptr]bool{}
 
 func watchDownloads(webview uintptr) {
-	if downloadsWatched {
+	source := webkitWebViewGetSession(webview)
+	if downloadsWatched[source] {
 		return
 	}
-	downloadsWatched = true
-	gSignalConnectData(webkitWebViewGetSession(webview), "download-started", downloadStartFn, 0, 0, 0)
+	downloadsWatched[source] = true
+	gSignalConnectData(source, "download-started", downloadStartFn, 0, 0, 0)
 }
 
 // downloadStarted cancels any download no OnDownload will place: WebKitGTK
@@ -1325,7 +1350,7 @@ func onUIThread() bool { return uiThreadID != 0 && syscall.Gettid() == uiThreadI
 
 const webkitCookiePersistentStorageSQLite = 1
 
-var cookiesPersisted bool
+var cookiesPersisted = map[uintptr]bool{} // per session; GTK thread only
 
 // persistCookies keeps cookies on disk beside the rest of the website data
 // (local storage, cache) the engine already persists: WebKitGTK's cookie
@@ -1333,11 +1358,11 @@ var cookiesPersisted bool
 // starts logged out -- unlike macOS, where cookies persist by default. An
 // ephemeral session has no base directory and stays in memory.
 func persistCookies(webview uintptr) {
-	if cookiesPersisted {
+	session := webkitWebViewGetSession(webview)
+	if cookiesPersisted[session] {
 		return
 	}
-	cookiesPersisted = true
-	session := webkitWebViewGetSession(webview)
+	cookiesPersisted[session] = true
 	manager := webkitSessionGetDataManager(session)
 	base := cstr(webkitDataManagerGetBaseDataDir(manager))
 	// WebKitGTK 4.x's default manager has no base directory, only one per
@@ -1353,4 +1378,33 @@ func persistCookies(webview uintptr) {
 	}
 	webkitCookieManagerSetPersistent(webkitSessionGetCookieManager(session),
 		filepath.Join(base, "cookies.sqlite"), webkitCookiePersistentStorageSQLite)
+}
+
+// --- ephemeral web views -----------------------------------------------------
+
+// registerEphemeralFuncs binds what an Options.Ephemeral web view needs: an
+// in-memory WebKitWebContext on 4.x, an in-memory WebKitNetworkSession on
+// 6.0 (where a web view takes its session as a construct property).
+func registerEphemeralFuncs(webkit, gobject uintptr) {
+	if gtk4 {
+		var sessionNew func() uintptr
+		var webViewType func() uintptr
+		var objectNew func(typ uintptr, prop string, value uintptr, end uintptr) uintptr
+		purego.RegisterLibFunc(&sessionNew, webkit, "webkit_network_session_new_ephemeral")
+		purego.RegisterLibFunc(&webViewType, webkit, "webkit_web_view_get_type")
+		purego.RegisterLibFunc(&objectNew, gobject, "g_object_new")
+		webkitWebViewNewEphemeral = func() (uintptr, uintptr) {
+			session := sessionNew()
+			return objectNew(webViewType(), "network-session", session, 0), session
+		}
+		return
+	}
+	var contextNew func() uintptr
+	var webViewNewWithContext func(ctx uintptr) uintptr
+	purego.RegisterLibFunc(&contextNew, webkit, "webkit_web_context_new_ephemeral")
+	purego.RegisterLibFunc(&webViewNewWithContext, webkit, "webkit_web_view_new_with_context")
+	webkitWebViewNewEphemeral = func() (uintptr, uintptr) {
+		ctx := contextNew()
+		return webViewNewWithContext(ctx), ctx
+	}
 }

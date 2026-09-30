@@ -22,10 +22,11 @@ func schemeReuseScenario() string {
 			return &SchemeResponse{Body: []byte("<html><body>" + name + "</body></html>"), MIMEType: "text/html"}
 		}
 	}
-	open := func(h SchemeHandler) string {
+	open := func(h SchemeHandler, ephemeral bool) string {
 		var w WebView
 		result := "no navigation"
 		w, err := NewWithOptions(Options{
+			Ephemeral:      ephemeral,
 			SchemeHandlers: map[string]SchemeHandler{"dup": h},
 			OnNavigation: func(ev NavigationEvent) {
 				result = "finished"
@@ -47,15 +48,19 @@ func schemeReuseScenario() string {
 
 	byA, handlerA := served("A")
 	byB, handlerB := served("B")
-	first := open(handlerA)
-	second := open(handlerB)
-	return first + " by " + *byA + ", " + second + " by " + *byB
+	byC, handlerC := served("C")
+	first := open(handlerA, false)
+	second := open(handlerB, false)
+	// An ephemeral web view has a web context of its own on WebKitGTK 4.x:
+	// the scheme must be registered there too.
+	third := open(handlerC, true)
+	return first + " by " + *byA + ", " + second + " by " + *byB + ", " + third + " by " + *byC
 }
 
 func TestSchemeReuseAcrossWebViews(t *testing.T) {
 	got, _ := resSchemeReuse.Load().(string)
 	requireGUI(t, got)
-	want := "finished by A, finished by B"
+	want := "finished by A, finished by B, finished by C"
 	if got != want {
 		t.Fatalf("same scheme in two web views: got %q, want %q", got, want)
 	}

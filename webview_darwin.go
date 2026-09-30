@@ -503,6 +503,7 @@ type webview struct {
 	contentHidden bool
 	onNavigation  func(NavigationEvent)
 	onNewWindow   func(string)
+	ephemeral     bool
 	onDownload    func(string) string
 	onDownloadEnd func(string, error)
 	// downloads maps an active WKDownload to its destination; main thread only.
@@ -601,6 +602,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		contentHidden:  opts.HideUntilLoaded,
 		onNavigation:   opts.OnNavigation,
 		onNewWindow:    opts.OnNewWindow,
+		ephemeral:      opts.Ephemeral,
 		onDownload:     opts.OnDownload,
 		onDownloadEnd:  opts.OnDownloadDone,
 		downloads:      map[objc.ID]string{},
@@ -691,6 +693,9 @@ func (w *webview) windowSettings(debug bool) {
 			prefs.Send(sel("setValue:forKey:"), yes, nsstr("developerExtrasEnabled"))
 		}
 		prefs.Send(sel("setValue:forKey:"), yes, nsstr("fullScreenEnabled"))
+		if w.ephemeral {
+			config.Send(sel("setWebsiteDataStore:"), class("WKWebsiteDataStore").Send(sel("nonPersistentDataStore")))
+		}
 		// macOS lets window.open run without a user gesture by default; popups
 		// must come from a click, as they do on WebKitGTK.
 		prefs.Send(sel("setJavaScriptCanOpenWindowsAutomatically:"), false)
