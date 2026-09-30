@@ -56,6 +56,7 @@ func TestMain(m *testing.M) {
 		resDialogCfg.Store(dialogConfigScenario())
 		resNoBridge.Store(noBridgeScenario())
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
+		resRevealTiming.Store(revealTimingScenario())
 		resNavigation.Store(navigationScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())

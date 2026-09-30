@@ -65,9 +65,13 @@ type Options struct {
 	// denies it by default).
 	NoBridge bool
 
-	// HideUntilLoaded keeps the web view hidden until the first navigation
-	// finishes or fails, so the window shows its native background instead of
-	// flashing an empty white page. macOS and Linux; ignored on Windows.
+	// HideUntilLoaded keeps the web view hidden until the first page can be
+	// drawn, so the window shows its native background instead of flashing an
+	// empty white page. On Linux that is when the navigation commits: WebKitGTK
+	// paints nothing until the page does, so the page shows as it paints. On
+	// macOS it is when the navigation finishes or fails, because WKWebView
+	// paints white between the commit and the page's first paint. Ignored on
+	// Windows.
 	HideUntilLoaded bool
 
 	// OnNavigation is called on the UI thread when a main-frame navigation

@@ -348,7 +348,13 @@ func newCallbacks() {
 	})
 	loadChangedFn = purego.NewCallback(func(webview, event, userData uintptr) uintptr {
 		w := lookupEngine(userData)
-		if w != nil && event == webkitLoadFinished {
+		if w == nil {
+			return 0
+		}
+		switch event {
+		case webkitLoadCommitted:
+			w.revealContent()
+		case webkitLoadFinished:
 			w.onLoadFinished()
 		}
 		return 0
@@ -1186,6 +1192,11 @@ func (w *webview) resolve(id string, status int, resultJSON string) {
 		marshalJSON(id), status, marshalJSON(resultJSON))
 	dispatchMain(func() { w.Eval(js) })
 }
+
+// WEBKIT_LOAD_COMMITTED: WebKitGTK draws nothing between it and the page's
+// first paint (the window background shows through), so a view held back by
+// HideUntilLoaded can show here instead of waiting for every subresource.
+const webkitLoadCommitted = 2
 
 // WEBKIT_LOAD_FINISHED; WebKitGTK also emits it after load-failed, so it
 // covers every way a navigation ends.

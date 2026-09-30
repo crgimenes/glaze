@@ -58,6 +58,7 @@ func TestMain(m *testing.M) {
 		resEditor.Store(editorScenario())
 		resNoBridge.Store(noBridgeScenario())
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
+		resRevealTiming.Store(revealTimingScenario())
 		resNavigation.Store(navigationScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
