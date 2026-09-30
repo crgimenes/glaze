@@ -40,6 +40,9 @@ func TestMain(m *testing.M) {
 	// scenario drives a real NSApplication run loop and can take a few seconds, so
 	// running all of them unconditionally makes a plain `go test` slow and fragile
 	// under a tight timeout. The assertions skip when their scenario didn't run.
+	if os.Getenv(nsappFirstEnv) == "1" {
+		os.Exit(nsappFirstChild())
+	}
 	flag.Parse()
 	if !testing.Short() {
 		runtime.LockOSThread()
