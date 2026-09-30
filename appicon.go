@@ -1,6 +1,9 @@
 package glaze
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // SetAppIcon gives the running application the icon in png — the picture the
 // Dock, the taskbar or the switcher shows for the PROCESS, which is a
@@ -21,4 +24,12 @@ func SetAppIcon(png []byte) error { return setAppIcon(png) }
 // icon to set at runtime — on Windows and Linux the icon comes from the
 // executable's resources or the desktop entry, both decided before the
 // process exists.
-var ErrIconUnsupported = errors.New("glaze: setting the application icon at runtime is not supported on this platform")
+//
+// It wraps the standard errors.ErrUnsupported. Windows and Linux are the
+// platforms where this is returned, which is to say the common case is a
+// correct program on a correct platform: it must not need a glaze-specific
+// sentinel to be told apart from a real failure. errors.Is against this
+// variable still matches, as before.
+var ErrIconUnsupported = fmt.Errorf(
+	"glaze: setting the application icon at runtime is not supported on this platform: %w",
+	errors.ErrUnsupported)
