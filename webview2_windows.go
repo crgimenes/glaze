@@ -565,7 +565,14 @@ const (
 // findEmbeddedBrowserDLL locates the installed Edge WebView2 Runtime's
 // EmbeddedBrowserWebView.dll via the registry (HKLM then HKCU), reimplementing
 // loader.hh's built-in discovery so no DLL is bundled.
+//
+// The registry can name a version folder that no longer exists: a self-update
+// installs the new version beside the old one and deletes the old, and if it is
+// interrupted the registration is left pointing at the deleted folder while a
+// working runtime sits next to it. So when the registered folder is missing,
+// look beside it before giving up.
 func findEmbeddedBrowserDLL() (string, error) {
+	stale := ""
 	for _, root := range []uintptr{hkeyLocalMachine, hkeyCurrentUser} {
 		val, err := regReadString(root, edgeClientStateKey, "EBWebView")
 		if err != nil || val == "" {
@@ -581,8 +588,50 @@ func findEmbeddedBrowserDLL() (string, error) {
 		if err == nil {
 			return dll, nil
 		}
+		if dll, ok := newestRuntimeDLL(filepath.Dir(val)); ok {
+			return dll, nil
+		}
+		stale = val
+	}
+	if stale != "" {
+		return "", fmt.Errorf("webview2: registered runtime folder %s is missing and no runtime was found beside it (reinstall the Edge WebView2 Runtime)", stale)
 	}
 	return "", errors.New("webview2: Edge WebView2 Runtime not found (install it)")
+}
+
+// newestRuntimeDLL returns EmbeddedBrowserWebView.dll from the highest version
+// folder under dir that has one for this architecture.
+func newestRuntimeDLL(dir string) (string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	best, bestDLL := "", ""
+	for _, e := range entries {
+		v := e.Name()
+		if !e.IsDir() || !versionBuildAtLeast(v, minAPIVersion) {
+			continue
+		}
+		dll := filepath.Join(dir, v, "EBWebView", arch(), "EmbeddedBrowserWebView.dll")
+		if _, err := os.Stat(dll); err != nil {
+			continue
+		}
+		if best == "" || versionLess(best, v) {
+			best, bestDLL = v, dll
+		}
+	}
+	return bestDLL, bestDLL != ""
+}
+
+// versionLess compares dotted numeric versions field by field.
+func versionLess(a, b string) bool {
+	pa, pb := splitDots(a), splitDots(b)
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		if x, y := atoiSafe(pa[i]), atoiSafe(pb[i]); x != y {
+			return x < y
+		}
+	}
+	return len(pa) < len(pb)
 }
 
 func arch() string {
