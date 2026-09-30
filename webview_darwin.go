@@ -731,15 +731,43 @@ func (w *webview) windowInit(window objc.ID) {
 		w.appDelegate = objc.ID(appDelegateClass).Send(sel("new"))
 		registerInstance(w.appDelegate, w)
 		w.app.Send(sel("setDelegate:"), w.appDelegate)
+		if appFinishedLaunching() {
+			// The run loop is not running now, but it has run: something
+			// earlier in the process (a native/tray loop that has since been
+			// stopped, a dialog, a game window) finished launching the app.
+			// applicationDidFinishLaunching is delivered once per process, so
+			// the temporary run below would never be stopped and New would
+			// block forever with no window and no error. Take the path the
+			// callback would have taken, minus the stop.
+			w.finishLaunching(w.app)
+			return
+		}
 		// Temporary run loop: returns once applicationDidFinishLaunching stops it.
 		w.app.Send(sel("run"))
 	})
+}
+
+// appFinishedLaunching reports whether AppKit has already finished launching
+// this process, and so has already delivered applicationDidFinishLaunching.
+func appFinishedLaunching() bool {
+	app := class("NSRunningApplication").Send(sel("currentApplication"))
+	if app == 0 {
+		return false
+	}
+	return app.Send(sel("isFinishedLaunching")) != 0
 }
 
 func (w *webview) onApplicationDidFinishLaunching(app objc.ID) {
 	if w.ownsWindow {
 		w.stopRunLoop()
 	}
+	w.finishLaunching(app)
+}
+
+// finishLaunching is what the delegate callback does apart from stopping the
+// temporary run loop. It is also the path taken when the app had finished
+// launching before the first web view, where there is no temporary loop.
+func (w *webview) finishLaunching(app objc.ID) {
 	if !isAppBundled() {
 		app.Send(sel("setActivationPolicy:"), nsApplicationActivationPolicyRegular)
 		app.Send(sel("activateIgnoringOtherApps:"), true)
