@@ -60,6 +60,7 @@ func TestMain(m *testing.M) {
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resRevealTiming.Store(revealTimingScenario())
 		resSpinner.Store(spinnerScenario())
+		resContextMenu.Store(contextMenuScenario())
 		resMediaCapture.Store(mediaCaptureScenario())
 		resNavigation.Store(navigationScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
@@ -714,4 +715,46 @@ func enableMockCapture(w *webview) {
 		prefs := w.webView.Send(sel("configuration")).Send(sel("preferences"))
 		prefs.Send(sel("_setMockCaptureDevicesEnabled:"), true)
 	})
+}
+
+var resContextMenu atomic.Value // string
+
+// contextMenuScenario hands a menu with WebKit's download items to both web
+// view classes the way AppKit does before showing it, and reports what is
+// left: the download items WKWebView would not carry out are gone.
+func contextMenuScenario() string {
+	var out []string
+	for _, firstMouse := range []bool{false, true} {
+		v, err := NewWithOptions(Options{AcceptsFirstMouse: firstMouse})
+		if err != nil {
+			return "new error: " + err.Error()
+		}
+		w := v.(*webview)
+		performOnMain(func() {
+			autorelease(func() {
+				menu := class("NSMenu").Send(sel("alloc")).Send(sel("initWithTitle:"), nsstr("")).Send(sel("autorelease"))
+				for _, id := range []string{"WKMenuItemIdentifierDownloadLinkedFile", "WKMenuItemIdentifierCopyLink", "WKMenuItemIdentifierDownloadImage", "WKMenuItemIdentifierDownloadMedia"} {
+					item := menu.Send(sel("addItemWithTitle:action:keyEquivalent:"), nsstr(id), objc.SEL(0), nsstr(""))
+					item.Send(sel("setIdentifier:"), nsstr(id))
+				}
+				w.webView.Send(sel("willOpenMenu:withEvent:"), menu, objc.ID(0))
+				var left []string
+				for i := range objc.Send[int](menu, sel("numberOfItems")) {
+					left = append(left, cstr(menu.Send(sel("itemAtIndex:"), i).Send(sel("identifier")).Send(sel("UTF8String"))))
+				}
+				out = append(out, fmt.Sprintf("firstMouse=%v left=%s", firstMouse, strings.Join(left, ",")))
+			})
+		})
+		v.Destroy()
+	}
+	return strings.Join(out, " | ")
+}
+
+func TestContextMenuDropsDeadDownloads(t *testing.T) {
+	got, _ := resContextMenu.Load().(string)
+	requireGUI(t, got)
+	want := "firstMouse=false left=WKMenuItemIdentifierCopyLink | firstMouse=true left=WKMenuItemIdentifierCopyLink"
+	if got != want {
+		t.Fatalf("context menu: got %q, want %q", got, want)
+	}
 }

@@ -130,6 +130,7 @@ var (
 
 	appDelegateClass, scriptHandlerClass, windowDelegateClass, uiDelegateClass objc.Class
 	schemeHandlerClass, firstMouseViewClass, navDelegateClass                  objc.Class
+	webViewClass                                                               objc.Class
 	downloadDelegateClass                                                      objc.Class
 )
 
@@ -293,16 +294,68 @@ func registerClasses() error {
 	// the "I had to click twice" complaint. Subclassing is the whole mechanism:
 	// AppKit asks the VIEW under the cursor, and there is no window-level or
 	// runtime switch for it.
+	menuMethod, err := contextMenuMethod()
+	if err != nil {
+		return fmt.Errorf("webview: context menu: %w", err)
+	}
 	firstMouseViewClass, err = objc.RegisterClass(
 		"GlazeFirstMouseWebView", objc.GetClass("WKWebView"), nil, nil,
 		[]objc.MethodDef{{
 			Cmd: sel("acceptsFirstMouse:"),
 			Fn:  func(self objc.ID, _cmd objc.SEL, event objc.ID) bool { return true },
-		}})
+		}, menuMethod})
 	if err != nil {
 		return fmt.Errorf("webview: first-mouse web view class: %w", err)
 	}
+	webViewClass, err = objc.RegisterClass(
+		"GlazeWebView", objc.GetClass("WKWebView"), nil, nil,
+		[]objc.MethodDef{menuMethod})
+	if err != nil {
+		return fmt.Errorf("webview: web view class: %w", err)
+	}
 	return nil
+}
+
+// contextMenuMethod takes out of the page's context menu the download items
+// WKWebView only carries out for an app with WebKit's private download
+// delegate: under glaze they would do nothing. Downloads the page starts
+// still reach OnDownload.
+//
+// WKWebView's own willOpenMenu:withEvent: is called by its implementation,
+// not with SendSuper: WebKit observes the view with KVO, which swaps the
+// instance's class for a generated subclass of ours, so "the superclass of
+// the object's class" is our class again and the call never ends.
+func contextMenuMethod() (objc.MethodDef, error) {
+	lib, err := purego.Dlopen("/usr/lib/libobjc.A.dylib", purego.RTLD_GLOBAL|purego.RTLD_LAZY)
+	if err != nil {
+		return objc.MethodDef{}, err
+	}
+	var methodImplementation func(cls objc.Class, name objc.SEL) uintptr
+	purego.RegisterLibFunc(&methodImplementation, lib, "class_getMethodImplementation")
+	name := sel("willOpenMenu:withEvent:")
+	wkWillOpenMenu := methodImplementation(objc.GetClass("WKWebView"), name)
+	return objc.MethodDef{
+		Cmd: name,
+		Fn: func(self objc.ID, _cmd objc.SEL, menu, event objc.ID) {
+			purego.SyscallN(wkWillOpenMenu, uintptr(self), uintptr(_cmd), uintptr(menu), uintptr(event))
+			removeMenuItems(menu, deadDownloadItems)
+		},
+	}, nil
+}
+
+var deadDownloadItems = map[string]bool{
+	"WKMenuItemIdentifierDownloadLinkedFile": true,
+	"WKMenuItemIdentifierDownloadImage":      true,
+	"WKMenuItemIdentifierDownloadMedia":      true,
+}
+
+func removeMenuItems(menu objc.ID, ids map[string]bool) {
+	for i := objc.Send[int](menu, sel("numberOfItems")) - 1; i >= 0; i-- {
+		id := menu.Send(sel("itemAtIndex:"), i).Send(sel("identifier"))
+		if id != 0 && ids[cstr(id.Send(sel("UTF8String")))] {
+			menu.Send(sel("removeItemAtIndex:"), i)
+		}
+	}
 }
 
 // startURLSchemeTask implements -webView:startURLSchemeTask:. It resolves the
@@ -745,7 +798,7 @@ func (w *webview) windowSettings(debug bool) {
 
 		// The first-mouse variant is a WKWebView subclass, so everything below
 		// treats it as one; only the class allocated differs.
-		viewClass := objc.Class(class("WKWebView"))
+		viewClass := webViewClass
 		if w.firstMouse {
 			viewClass = firstMouseViewClass
 		}
