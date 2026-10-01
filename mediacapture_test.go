@@ -26,7 +26,8 @@ func mediaCaptureScenario() string {
 		}
 		_, _ = fmt.Fprint(rw, `<!DOCTYPE html><html><body><script>
 function report(v) { new Image().src = "/r?v=" + encodeURIComponent(v); }
-navigator.mediaDevices.getUserMedia({audio: true, video: true}).then(
+if (!navigator.mediaDevices) report("no-mediadevices");
+else navigator.mediaDevices.getUserMedia({audio: true, video: true}).then(
   function(s) { report("tracks=" + s.getTracks().length); },
   function(e) { report(e.name); });
 </script></body></html>`)
@@ -67,6 +68,12 @@ navigator.mediaDevices.getUserMedia({audio: true, video: true}).then(
 func TestMediaCapture(t *testing.T) {
 	got, _ := resMediaCapture.Load().(string)
 	requireGUI(t, got)
+	if strings.Contains(got, "page=no-mediadevices") {
+		// Recent macOS WebKit hides the capture API from an app without
+		// NSCameraUsageDescription/NSMicrophoneUsageDescription, which a test
+		// binary has no Info.plist to carry.
+		t.Skip("navigator.mediaDevices absent: the test binary has no camera/microphone usage descriptions")
+	}
 	want := "allow=false asked=[origin=true camera=true mic=true] page=NotAllowedError" +
 		" | allow=true asked=[origin=true camera=true mic=true] page=tracks=2"
 	if got != want {
