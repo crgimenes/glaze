@@ -66,7 +66,7 @@ func historyScenario() string {
 	}
 	defer w.Destroy()
 	var timedOut atomic.Bool
-	time.AfterFunc(15*time.Second, func() { timedOut.Store(true); w.Terminate() })
+	defer time.AfterFunc(15*time.Second, func() { timedOut.Store(true); w.Terminate() }).Stop()
 	w.Navigate("hist://test/a")
 	w.Run()
 	if timedOut.Load() {

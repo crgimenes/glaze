@@ -79,7 +79,7 @@ func downloadScenario() string {
 	}
 	defer w.Destroy()
 	var timedOut atomic.Bool
-	time.AfterFunc(20*time.Second, func() { timedOut.Store(true); w.Terminate() })
+	defer time.AfterFunc(20*time.Second, func() { timedOut.Store(true); w.Terminate() }).Stop()
 	w.Navigate(srv.URL + "/attachment")
 	w.Run()
 	entries, _ := os.ReadDir(dir)

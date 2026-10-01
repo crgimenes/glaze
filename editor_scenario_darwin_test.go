@@ -50,7 +50,7 @@ func editorScenario() string {
 			wv.window.Send(sel("sendEvent:"), ev)
 		})
 	})
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 
 	page := `<!DOCTYPE html><html><head><style>` + string(editor.CSS()) + `</style></head><body>
 <div id="fe" style="height:12em"></div><div id="se" style="height:8em"></div>

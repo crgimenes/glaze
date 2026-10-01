@@ -73,7 +73,7 @@ func winCloseViaUIScenario() string {
 
 	var watchdogFired atomic.Bool
 	time.AfterFunc(2*time.Second, func() { postMessageW(hwnd, wmClose, 0, 0) })
-	time.AfterFunc(40*time.Second, func() { watchdogFired.Store(true); w.Terminate() })
+	defer time.AfterFunc(40*time.Second, func() { watchdogFired.Store(true); w.Terminate() }).Stop()
 
 	w.SetHtml(`<!DOCTYPE html><html><body>close test</body></html>`)
 	w.Run() // must return once WM_CLOSE posts WM_QUIT
@@ -226,7 +226,7 @@ func winBridgeScenario() string {
 		}
 		w.Terminate()
 	})
-	time.AfterFunc(40*time.Second, w.Terminate) // watchdog
+	defer time.AfterFunc(40*time.Second, w.Terminate).Stop() // watchdog
 
 	w.SetHtml(`<!DOCTYPE html><html><body><script>
 window.addEventListener('load', async function(){
@@ -270,7 +270,7 @@ func winErrorUnbindScenario() string {
 	_ = w.Bind("boom", func() (string, error) { return "", errors.New("kaboom") })
 	_ = w.Bind("temp", func() string { return "x" })
 	_ = w.Unbind("temp")
-	time.AfterFunc(40*time.Second, w.Terminate)
+	defer time.AfterFunc(40*time.Second, w.Terminate).Stop()
 
 	w.SetHtml(`<!DOCTYPE html><html><body><script>
 window.addEventListener('load', async function(){
@@ -317,7 +317,7 @@ func winRichTypesScenario() string {
 		}
 		return t
 	})
-	time.AfterFunc(40*time.Second, w.Terminate)
+	defer time.AfterFunc(40*time.Second, w.Terminate).Stop()
 
 	w.SetHtml(`<!DOCTYPE html><html><body><script>
 window.addEventListener('load', async function(){

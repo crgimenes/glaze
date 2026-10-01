@@ -40,7 +40,7 @@ func schemeReuseScenario() string {
 			return "new error: " + err.Error()
 		}
 		defer w.Destroy()
-		time.AfterFunc(10*time.Second, w.Terminate)
+		defer time.AfterFunc(10*time.Second, w.Terminate).Stop()
 		w.Navigate("dup://test/")
 		w.Run()
 		return result

@@ -47,7 +47,7 @@ func hideUntilLoadedScenario() string {
 			}
 		}
 	}()
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 	w.SetHtml(`<!DOCTYPE html><html><body>loaded</body></html>`)
 	w.Run()
 	return fmt.Sprintf("hidden at start=%v, revealed after load=%v", hiddenAtStart, revealed)
@@ -109,7 +109,7 @@ func revealTimingScenario() string {
 			}
 		}
 	}()
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 	w.Navigate(srv.URL)
 	w.Run()
 	if revealedAt.IsZero() || finishedAt.IsZero() {
@@ -168,7 +168,7 @@ func spinnerScenario() string {
 			}
 		}
 	}()
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 	w.Navigate(srv.URL)
 	w.Run()
 	return fmt.Sprintf("spinner shown=%v, gone after=%v", shown, gone)

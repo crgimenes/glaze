@@ -71,7 +71,7 @@ func navigationScenario() string {
 	}
 	defer w.Destroy()
 	var timedOut atomic.Bool
-	time.AfterFunc(15*time.Second, func() { timedOut.Store(true); w.Terminate() })
+	defer time.AfterFunc(15*time.Second, func() { timedOut.Store(true); w.Terminate() }).Stop()
 	w.Navigate(slow.URL + "/")
 	time.AfterFunc(500*time.Millisecond, func() { w.Dispatch(func() { w.Navigate("probe://test/ok") }) })
 	w.Run()

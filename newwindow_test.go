@@ -41,7 +41,7 @@ func newWindowScenario() string {
 		return "new error: " + err.Error()
 	}
 	defer w.Destroy()
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 	w.Navigate("nw://test/")
 	w.Run()
 	return strings.Join(got, " ")

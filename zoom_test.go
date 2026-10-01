@@ -39,7 +39,7 @@ func zoomScenario() string {
 	}
 	defer w.Destroy()
 	w.SetSize(800, 600, HintNone)
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 	w.Navigate("zoom://test/")
 	w.Run()
 	if len(widths) != 2 || widths[1] == 0 {

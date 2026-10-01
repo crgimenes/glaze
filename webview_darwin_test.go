@@ -263,7 +263,7 @@ func bridgeScenario() string {
 		}
 		w.Terminate()
 	})
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 
 	w.SetHtml(`<!DOCTYPE html><html><body><script>
 window.addEventListener('load', async function(){
@@ -302,7 +302,7 @@ func errorUnbindScenario() string {
 	_ = w.Bind("boom", func() (string, error) { return "", errors.New("kaboom") })
 	_ = w.Bind("temp", func() string { return "x" })
 	_ = w.Unbind("temp")
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 
 	w.SetHtml(`<!DOCTYPE html><html><body><script>
 window.addEventListener('load', async function(){
@@ -347,7 +347,7 @@ func richTypesScenario() string {
 		}
 		return t
 	})
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 
 	w.SetHtml(`<!DOCTYPE html><html><body><script>
 window.addEventListener('load', async function(){

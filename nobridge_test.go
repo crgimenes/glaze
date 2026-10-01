@@ -63,7 +63,7 @@ new Image().src = 'report?' + encodeURIComponent(r);
 	}
 
 	w.Init("window.__probe__ = 1;")
-	time.AfterFunc(15*time.Second, w.Terminate)
+	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 	w.Navigate("probe://test/index.html")
 	w.Run()
 

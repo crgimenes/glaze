@@ -49,7 +49,7 @@ func ephemeralScenario() string {
 			return err.Error()
 		}
 		defer w.Destroy()
-		time.AfterFunc(10*time.Second, w.Terminate)
+		defer time.AfterFunc(10*time.Second, w.Terminate).Stop()
 		w.Navigate(srv.URL + "/" + label)
 		w.Run()
 		return ""
