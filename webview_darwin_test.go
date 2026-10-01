@@ -60,6 +60,7 @@ func TestMain(m *testing.M) {
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resRevealTiming.Store(revealTimingScenario())
 		resSpinner.Store(spinnerScenario())
+		resMediaCapture.Store(mediaCaptureScenario())
 		resNavigation.Store(navigationScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
@@ -703,4 +704,14 @@ func TestOnOpenURLs(t *testing.T) {
 
 func spinnerVisible(w *webview) bool {
 	return w.spinner != 0 && !objc.Send[bool](w.spinner, sel("isHidden"))
+}
+
+// enableMockCapture gives the view simulated cameras and microphones (a
+// private WebKit preference, for tests only), so the permission path runs
+// without devices or the system's privacy prompt.
+func enableMockCapture(w *webview) {
+	performOnMain(func() {
+		prefs := w.webView.Send(sel("configuration")).Send(sel("preferences"))
+		prefs.Send(sel("_setMockCaptureDevicesEnabled:"), true)
+	})
 }

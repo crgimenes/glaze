@@ -119,6 +119,18 @@ type Options struct {
 	// command-line argument.
 	OnOpenURLs func(urls []string)
 
+	// OnMediaCapture decides whether the page from origin (scheme://host[:port])
+	// may use the camera, the microphone or both. Without it every request is
+	// denied, as are other permissions (geolocation, notifications). A grant
+	// also lets the page learn the devices' names. On Linux, setting it also
+	// turns on media streams and WebRTC, which WebKitGTK leaves off. macOS
+	// asks the user once more on its own and needs NSCameraUsageDescription
+	// and NSMicrophoneUsageDescription in the app's Info.plist (and, when
+	// sandboxed, the device.camera and device.audio-input entitlements), or
+	// the system ends the app. Called on the UI thread; may run a modal
+	// dialog. macOS 12+ and Linux; never called on Windows.
+	OnMediaCapture func(origin string, camera, microphone bool) bool
+
 	// Ephemeral keeps the web view's website data -- cookies, local storage,
 	// cache -- in memory only: it starts with nothing from earlier runs and
 	// leaves nothing behind. Each ephemeral web view gets its own store.

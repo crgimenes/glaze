@@ -242,6 +242,18 @@ func registerClasses() error {
 				Fn:  runOpenPanel,
 			},
 			{
+				// macOS 12+; without it WebKit asks the user itself.
+				Cmd: sel("webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, origin, frame objc.ID, kind int, handler objc.ID) {
+					decision := int64(wkPermissionDeny)
+					w := lookupEngine(self)
+					if w != nil && w.decideMediaCapture(securityOrigin(origin), kind != wkMediaCaptureMicrophone, kind != wkMediaCaptureCamera) {
+						decision = wkPermissionGrant
+					}
+					invokeNativeBlock(handler, "v@?q", unsafe.Pointer(&decision)) // #nosec G103 -- the arg's address, for NSInvocation
+				},
+			},
+			{
 				// Returning nil creates no web view: the request goes to
 				// OnNewWindow instead of opening a window here.
 				Cmd: sel("webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:"),
@@ -514,10 +526,13 @@ type webview struct {
 	onNavigation func(NavigationEvent)
 	// onNavigationStart: see Options.OnNavigationStart.
 	onNavigationStart func(string)
-	onNewWindow       func(string)
-	ephemeral         bool
-	onDownload        func(string) string
-	onDownloadEnd     func(string, error)
+	// onMediaCapture: see Options.OnMediaCapture; mediaGranted once it said yes.
+	onMediaCapture func(origin string, camera, microphone bool) bool
+	mediaGranted   bool
+	onNewWindow    func(string)
+	ephemeral      bool
+	onDownload     func(string) string
+	onDownloadEnd  func(string, error)
 	// downloads maps an active WKDownload to its destination; main thread only.
 	downloads        map[objc.ID]string
 	downloadDelegate objc.ID
@@ -614,6 +629,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		contentHidden:     opts.HideUntilLoaded,
 		onNavigation:      opts.OnNavigation,
 		onNavigationStart: opts.OnNavigationStart,
+		onMediaCapture:    opts.OnMediaCapture,
 		onNewWindow:       opts.OnNewWindow,
 		ephemeral:         opts.Ephemeral,
 		onDownload:        opts.OnDownload,
@@ -1376,6 +1392,30 @@ func isCancelled(nsErr objc.ID) bool {
 	domain, code := nsErrorCode(nsErr)
 	return domain == "NSURLErrorDomain" && code == -999 ||
 		domain == "WebKitErrorDomain" && code == 102
+}
+
+// WKMediaCaptureType (camera, microphone, both) and WKPermissionDecision
+// (0 is "ask the user", never used: the app decides).
+const (
+	wkMediaCaptureCamera     = 0
+	wkMediaCaptureMicrophone = 1
+
+	wkPermissionGrant = 1
+	wkPermissionDeny  = 2
+)
+
+// securityOrigin renders a WKSecurityOrigin as scheme://host[:port].
+func securityOrigin(o objc.ID) string {
+	if o == 0 {
+		return ""
+	}
+	origin := cstr(o.Send(sel("protocol")).Send(sel("UTF8String"))) + "://" +
+		cstr(o.Send(sel("host")).Send(sel("UTF8String")))
+	port := objc.Send[int](o, sel("port"))
+	if port != 0 {
+		origin += fmt.Sprintf(":%d", port)
+	}
+	return origin
 }
 
 // WKNavigationActionPolicy / WKNavigationResponsePolicy: 1 allow, 2 download.

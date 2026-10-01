@@ -49,3 +49,19 @@ func callDownloadDone(f func(string, error), path string, err error) {
 	defer func() { _ = recover() }()
 	f(path, err)
 }
+
+// decideMediaCapture asks the app, with panic containment; without
+// OnMediaCapture the answer is no.
+func (w *webview) decideMediaCapture(origin string, camera, microphone bool) (allow bool) {
+	if w.onMediaCapture == nil {
+		return false
+	}
+	func() {
+		defer func() { _ = recover() }()
+		allow = w.onMediaCapture(origin, camera, microphone)
+	}()
+	if allow {
+		w.mediaGranted = true
+	}
+	return allow
+}

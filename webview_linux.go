@@ -173,7 +173,7 @@ var (
 	// Library handles kept after ensureInit so other files (e.g. the file
 	// dialogs in dialog_linux.go) can lazily resolve extra symbols without
 	// re-dlopening or duplicating the soname-selection logic.
-	gtkLib, glibLib uintptr
+	gtkLib, glibLib, webkitLib uintptr
 )
 
 func openFirst(names ...string) (uintptr, error) {
@@ -245,7 +245,7 @@ func ensureInit() error {
 			}
 		}
 
-		gtkLib, glibLib = gtk, glib
+		gtkLib, glibLib, webkitLib = gtk, glib, webkit
 
 		purego.RegisterLibFunc(&gIdleAddFull, glib, "g_idle_add_full")
 		purego.RegisterLibFunc(&gMainContextIteration, glib, "g_main_context_iteration")
@@ -331,6 +331,7 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitNavigationActionGetRequest, webkit, "webkit_navigation_action_get_request")
 		purego.RegisterLibFunc(&webkitWebViewGetFindController, webkit, "webkit_web_view_get_find_controller")
 		registerDownloadFuncs(webkit)
+		registerMediaFuncs(webkit, gobject)
 		purego.RegisterLibFunc(&webkitFindControllerSearch, webkit, "webkit_find_controller_search")
 		purego.RegisterLibFunc(&webkitFindControllerSearchNext, webkit, "webkit_find_controller_search_next")
 		purego.RegisterLibFunc(&webkitFindControllerSearchPrev, webkit, "webkit_find_controller_search_previous")
@@ -566,7 +567,10 @@ type webview struct {
 	onNavigation     func(NavigationEvent)
 	// onNavigationStart: see Options.OnNavigationStart.
 	onNavigationStart func(string)
-	onNewWindow       func(string)
+	// onMediaCapture: see Options.OnMediaCapture; mediaGranted once it said yes.
+	onMediaCapture func(origin string, camera, microphone bool) bool
+	mediaGranted   bool
+	onNewWindow    func(string)
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
 	// so that navigation is reported once, as a failure.
 	loadFailed bool
@@ -817,6 +821,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		contentHidden:     opts.HideUntilLoaded,
 		onNavigation:      opts.OnNavigation,
 		onNavigationStart: opts.OnNavigationStart,
+		onMediaCapture:    opts.OnMediaCapture,
 		onNewWindow:       opts.OnNewWindow,
 		onDownload:        opts.OnDownload,
 		onDownloadEnd:     opts.OnDownloadDone,
@@ -879,6 +884,7 @@ func (w *webview) windowInit(window uintptr) error {
 	}
 	watchDownloads(w.webview)
 	persistCookies(w.webview)
+	gSignalConnectData(w.webview, "permission-request", permissionRequestFn, w.id, 0, 0)
 	if w.onNavigation != nil {
 		gSignalConnectData(w.webview, "load-failed", loadFailedFn, w.id, 0, 0)
 		gSignalConnectData(w.webview, "load-failed-with-tls-errors", loadTLSFailedFn, w.id, 0, 0)
@@ -904,6 +910,7 @@ func (w *webview) windowSettings(debug bool) {
 	// The default already, set so both engines give the same guarantee:
 	// popups only from a user gesture.
 	webkitSettingsSetJavascriptCanOpenWindows(settings, false)
+	w.mediaSettings(settings)
 	if debug {
 		webkitSettingsSetEnableWriteConsoleToStdout(settings, true)
 		webkitSettingsSetEnableDeveloperExtras(settings, true)

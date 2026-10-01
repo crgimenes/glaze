@@ -58,6 +58,7 @@ func TestMain(m *testing.M) {
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resRevealTiming.Store(revealTimingScenario())
 		resSpinner.Store(spinnerScenario())
+		resMediaCapture.Store(mediaCaptureScenario())
 		resNavigation.Store(navigationScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
@@ -430,4 +431,12 @@ func spinnerVisible(w *webview) bool {
 		purego.RegisterLibFunc(&gtkWidgetGetVisible, gtkLib, "gtk_widget_get_visible")
 	}
 	return w.spinner != 0 && gtkWidgetGetVisible(w.spinner)
+}
+
+// enableMockCapture gives the view simulated cameras and microphones, so the
+// permission path runs where there is no device (CI).
+func enableMockCapture(w *webview) {
+	var setMock func(settings uintptr, enabled bool)
+	purego.RegisterLibFunc(&setMock, webkitLib, "webkit_settings_set_enable_mock_capture_devices")
+	setMock(webkitWebViewGetSettings(w.webview), true)
 }
