@@ -66,6 +66,8 @@ func TestMain(m *testing.M) {
 		resContextMenu.Store(contextMenuScenario())
 		resMediaCapture.Store(mediaCaptureScenario())
 		resNavigation.Store(navigationScenario())
+		resURLChange.Store(urlChangeScenario())
+		resMediaOrigin.Store(mediaOriginScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
 		resNewWindow.Store(newWindowScenario())

@@ -85,6 +85,13 @@ type Options struct {
 	// reported. macOS and Linux; never called on Windows.
 	OnNavigationStart func(url string)
 
+	// OnURLChange is called on the UI thread when the page on screen changes
+	// its URL without loading a new document: history.pushState or
+	// replaceState, a fragment link, back or forward between entries of the
+	// same document. A load reports its URL through OnNavigation instead.
+	// macOS and Linux; never called on Windows.
+	OnURLChange func(url string)
+
 	// OnNewWindow receives the URL of a page's request for a new window (a
 	// target=_blank link, window.open). glaze never opens the window itself,
 	// with or without a handler: the request is dropped and the page's
@@ -120,9 +127,13 @@ type Options struct {
 	OnOpenURLs func(urls []string)
 
 	// OnMediaCapture decides whether the page from origin (scheme://host[:port])
-	// may use the camera, the microphone or both. Without it every request is
+	// may use the camera, the microphone or both. origin is always the
+	// top-level page's: a frame from another origin reaches here only when
+	// that page delegates the device to it (<iframe allow="camera">), and the
+	// engine denies it otherwise, so the page answers for its frames, as in
+	// the major browsers' permission delegation. Without it every request is
 	// denied, as are other permissions (geolocation, notifications). A grant
-	// also lets the page learn the devices' names. On Linux, setting it also
+	// also lets that page learn the devices' names, until it navigates away. On Linux, setting it also
 	// turns on media streams and WebRTC, which WebKitGTK leaves off. macOS
 	// asks the user once more on its own and needs NSCameraUsageDescription
 	// and NSMicrophoneUsageDescription in the app's Info.plist (and, when

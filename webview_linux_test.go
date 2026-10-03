@@ -60,6 +60,8 @@ func TestMain(m *testing.M) {
 		resSpinner.Store(spinnerScenario())
 		resMediaCapture.Store(mediaCaptureScenario())
 		resNavigation.Store(navigationScenario())
+		resURLChange.Store(urlChangeScenario())
+		resMediaOrigin.Store(mediaOriginScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
 		resNewWindow.Store(newWindowScenario())

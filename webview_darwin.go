@@ -579,9 +579,10 @@ type webview struct {
 	onNavigation func(NavigationEvent)
 	// onNavigationStart: see Options.OnNavigationStart.
 	onNavigationStart func(string)
-	// onMediaCapture: see Options.OnMediaCapture; mediaGranted once it said yes.
+	// onURLChange: see Options.OnURLChange; set, navDelegate observes the
+	// web view's URL.
+	onURLChange    func(string)
 	onMediaCapture func(origin string, camera, microphone bool) bool
-	mediaGranted   bool
 	onNewWindow    func(string)
 	ephemeral      bool
 	onDownload     func(string) string
@@ -682,6 +683,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		contentHidden:     opts.HideUntilLoaded,
 		onNavigation:      opts.OnNavigation,
 		onNavigationStart: opts.OnNavigationStart,
+		onURLChange:       opts.OnURLChange,
 		onMediaCapture:    opts.OnMediaCapture,
 		onNewWindow:       opts.OnNewWindow,
 		ephemeral:         opts.Ephemeral,
@@ -847,11 +849,14 @@ func (w *webview) windowSettings(debug bool) {
 			w.downloadDelegate = objc.ID(downloadDelegateClass).Send(sel("new"))
 			registerInstance(w.downloadDelegate, w)
 		}
-		if w.contentHidden || w.onNavigation != nil || w.onNavigationStart != nil || w.onDownload != nil {
+		if w.contentHidden || w.onNavigation != nil || w.onNavigationStart != nil || w.onDownload != nil || w.onURLChange != nil {
 			// Weak reference too, same as the UI delegate.
 			w.navDelegate = objc.ID(navDelegateClass).Send(sel("new"))
 			registerInstance(w.navDelegate, w)
 			w.webView.Send(sel("setNavigationDelegate:"), w.navDelegate)
+		}
+		if w.onURLChange != nil {
+			w.webView.Send(sel("addObserver:forKeyPath:options:context:"), w.navDelegate, nsstr("URL"), uint(0), uintptr(0))
 		}
 		if w.contentHidden {
 			w.webView.Send(sel("setHidden:"), true)
@@ -1368,6 +1373,9 @@ func (w *webview) resolve(id string, status int, resultJSON string) {
 // only weakly (the strong references live on w).
 func (w *webview) releaseWebViewDelegates() {
 	if w.navDelegate != 0 {
+		if w.onURLChange != nil {
+			w.webView.Send(sel("removeObserver:forKeyPath:"), w.navDelegate, nsstr("URL"))
+		}
 		w.webView.Send(sel("setNavigationDelegate:"), objc.ID(0))
 		unregisterInstance(w.navDelegate)
 		w.navDelegate.Send(sel("release"))
@@ -1697,6 +1705,17 @@ func registerNavigationClasses() error {
 			{
 				Cmd: sel("webView:didFailProvisionalNavigation:withError:"),
 				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { ended(self, wv, err) },
+			},
+			{
+				// KVO of the web view's URL. A load moves it too, but while
+				// loading: that one ends in OnNavigation.
+				Cmd: sel("observeValueForKeyPath:ofObject:change:context:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, keyPath, wv, change objc.ID, context uintptr) {
+					w := lookupEngine(self)
+					if w != nil && !objc.Send[bool](wv, sel("isLoading")) {
+						callURL(w.onURLChange, absoluteString(wv.Send(sel("URL"))))
+					}
+				},
 			},
 		})
 	if err != nil {

@@ -56,12 +56,6 @@ func (w *webview) decideMediaCapture(origin string, camera, microphone bool) (al
 	if w.onMediaCapture == nil {
 		return false
 	}
-	func() {
-		defer func() { _ = recover() }()
-		allow = w.onMediaCapture(origin, camera, microphone)
-	}()
-	if allow {
-		w.mediaGranted = true
-	}
-	return allow
+	defer func() { _ = recover() }()
+	return w.onMediaCapture(origin, camera, microphone)
 }

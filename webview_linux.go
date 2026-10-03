@@ -113,6 +113,7 @@ var (
 	webkitWebViewStopLoading                      func(webview uintptr)
 	webkitWebViewLoadHTML                         func(webview uintptr, html string, baseURI uintptr)
 	webkitWebViewGetURI                           func(webview uintptr) uintptr
+	webkitWebViewIsLoading                        func(webview uintptr) bool
 	webkitUserContentManagerRegisterHandler       func(manager uintptr, name string)
 	webkitUserContentManagerAddScript             func(manager, script uintptr)
 	webkitUserContentManagerRemoveAllScripts      func(manager uintptr)
@@ -160,6 +161,7 @@ var (
 	messageHandlerFn uintptr
 	windowDestroyFn  uintptr
 	loadChangedFn    uintptr
+	uriChangedFn     uintptr
 	loadFailedFn     uintptr
 	loadTLSFailedFn  uintptr
 	createFn         uintptr
@@ -305,6 +307,7 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitWebViewStopLoading, webkit, "webkit_web_view_stop_loading")
 		purego.RegisterLibFunc(&webkitWebViewLoadHTML, webkit, "webkit_web_view_load_html")
 		purego.RegisterLibFunc(&webkitWebViewGetURI, webkit, "webkit_web_view_get_uri")
+		purego.RegisterLibFunc(&webkitWebViewIsLoading, webkit, "webkit_web_view_is_loading")
 		purego.RegisterLibFunc(&webkitUserContentManagerAddScript, webkit, "webkit_user_content_manager_add_script")
 		purego.RegisterLibFunc(&webkitUserContentManagerRemoveAllScripts, webkit, "webkit_user_content_manager_remove_all_scripts")
 		purego.RegisterLibFunc(&webkitUserScriptNew, webkit, "webkit_user_script_new")
@@ -376,6 +379,15 @@ func newCallbacks() {
 			w.revealContent()
 		case webkitLoadFinished:
 			w.onLoadFinished()
+		}
+		return 0
+	})
+	// notify::uri(GObject*, GParamSpec*, gpointer). A load moves the URI
+	// too, but while loading: that one ends in OnNavigation.
+	uriChangedFn = purego.NewCallback(func(webview, pspec, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w != nil && !webkitWebViewIsLoading(webview) {
+			callURL(w.onURLChange, cstr(webkitWebViewGetURI(webview)))
 		}
 		return 0
 	})
@@ -567,10 +579,9 @@ type webview struct {
 	onNavigation     func(NavigationEvent)
 	// onNavigationStart: see Options.OnNavigationStart.
 	onNavigationStart func(string)
-	// onMediaCapture: see Options.OnMediaCapture; mediaGranted once it said yes.
-	onMediaCapture func(origin string, camera, microphone bool) bool
-	mediaGranted   bool
-	onNewWindow    func(string)
+	onURLChange       func(string)
+	onMediaCapture    func(origin string, camera, microphone bool) bool
+	onNewWindow       func(string)
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
 	// so that navigation is reported once, as a failure.
 	loadFailed bool
@@ -821,6 +832,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		contentHidden:     opts.HideUntilLoaded,
 		onNavigation:      opts.OnNavigation,
 		onNavigationStart: opts.OnNavigationStart,
+		onURLChange:       opts.OnURLChange,
 		onMediaCapture:    opts.OnMediaCapture,
 		onNewWindow:       opts.OnNewWindow,
 		onDownload:        opts.OnDownload,
@@ -878,6 +890,9 @@ func (w *webview) windowInit(window uintptr) error {
 	w.manager = webkitWebViewGetUserContentManager(w.webview)
 	if w.contentHidden || w.onNavigation != nil || w.onNavigationStart != nil {
 		gSignalConnectData(w.webview, "load-changed", loadChangedFn, w.id, 0, 0)
+	}
+	if w.onURLChange != nil {
+		gSignalConnectData(w.webview, "notify::uri", uriChangedFn, w.id, 0, 0)
 	}
 	if w.onNewWindow != nil {
 		gSignalConnectData(w.webview, "create", createFn, w.id, 0, 0)

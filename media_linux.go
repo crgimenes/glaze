@@ -16,7 +16,6 @@ var (
 	webkitUserMediaRequestType         func() uintptr
 	webkitUserMediaIsForAudio          func(request uintptr) bool
 	webkitUserMediaIsForVideo          func(request uintptr) bool
-	webkitDeviceInfoRequestType        func() uintptr
 	webkitPermissionRequestAllow       func(request uintptr)
 	webkitPermissionRequestDeny        func(request uintptr)
 	webkitSettingsSetEnableMediaStream func(settings uintptr, enabled bool)
@@ -30,7 +29,6 @@ func registerMediaFuncs(webkit, gobject uintptr) {
 	purego.RegisterLibFunc(&webkitUserMediaRequestType, webkit, "webkit_user_media_permission_request_get_type")
 	purego.RegisterLibFunc(&webkitUserMediaIsForAudio, webkit, "webkit_user_media_permission_is_for_audio_device")
 	purego.RegisterLibFunc(&webkitUserMediaIsForVideo, webkit, "webkit_user_media_permission_is_for_video_device")
-	purego.RegisterLibFunc(&webkitDeviceInfoRequestType, webkit, "webkit_device_info_permission_request_get_type")
 	purego.RegisterLibFunc(&webkitPermissionRequestAllow, webkit, "webkit_permission_request_allow")
 	purego.RegisterLibFunc(&webkitPermissionRequestDeny, webkit, "webkit_permission_request_deny")
 	purego.RegisterLibFunc(&webkitSettingsSetEnableMediaStream, webkit, "webkit_settings_set_enable_media_stream")
@@ -46,11 +44,10 @@ func registerMediaFuncs(webkit, gobject uintptr) {
 		switch {
 		case w == nil:
 		case gTypeCheckInstanceIsA(request, webkitUserMediaRequestType()):
+			// The request carries no origin (WebKitGTK drops it), so the
+			// top-level page's stands for it, as OnMediaCapture documents.
 			allow = w.decideMediaCapture(originOf(cstr(webkitWebViewGetURI(webview))),
 				webkitUserMediaIsForVideo(request), webkitUserMediaIsForAudio(request))
-		case gTypeCheckInstanceIsA(request, webkitDeviceInfoRequestType()):
-			// Device names, which a page may only learn after a grant.
-			allow = w.mediaGranted
 		}
 		if allow {
 			webkitPermissionRequestAllow(request)
