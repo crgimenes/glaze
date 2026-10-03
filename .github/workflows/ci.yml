@@ -119,6 +119,13 @@ jobs:
           go-version-file: go.mod
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      # Both modules, because a bump in the root (a dep, or the go directive)
+      # leaves examples/ behind and the build only says "no go files to analyze"
+      # after the whole matrix has downloaded its dependencies.
+      - name: go.mod tidy
+        run: |
+          go mod tidy -diff || { echo "go.mod/go.sum not tidy: run go mod tidy"; exit 1; }
+          (cd examples && go mod tidy -diff) || { echo "examples not tidy: run (cd examples && go mod tidy)"; exit 1; }
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
       - name: Lint (every backend / GOOS)
