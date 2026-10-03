@@ -588,8 +588,9 @@ func findEmbeddedBrowserDLL() (string, error) {
 		if err == nil {
 			return dll, nil
 		}
-		if dll, ok := newestRuntimeDLL(filepath.Dir(val)); ok {
-			return dll, nil
+		sibling, ok := newestRuntimeDLL(filepath.Dir(val))
+		if ok {
+			return sibling, nil
 		}
 		stale = val
 	}
@@ -613,7 +614,8 @@ func newestRuntimeDLL(dir string) (string, bool) {
 			continue
 		}
 		dll := filepath.Join(dir, v, "EBWebView", arch(), "EmbeddedBrowserWebView.dll")
-		if _, err := os.Stat(dll); err != nil {
+		_, err = os.Stat(dll)
+		if err != nil {
 			continue
 		}
 		if best == "" || versionLess(best, v) {
@@ -627,7 +629,8 @@ func newestRuntimeDLL(dir string) (string, bool) {
 func versionLess(a, b string) bool {
 	pa, pb := splitDots(a), splitDots(b)
 	for i := 0; i < len(pa) && i < len(pb); i++ {
-		if x, y := atoiSafe(pa[i]), atoiSafe(pb[i]); x != y {
+		x, y := atoiSafe(pa[i]), atoiSafe(pb[i])
+		if x != y {
 			return x < y
 		}
 	}

@@ -58,7 +58,8 @@ func ephemeralScenario() string {
 		label     string
 		ephemeral bool
 	}{{"persistent", false}, {"ephemeral1", true}, {"ephemeral2", true}} {
-		if msg := visit(v.label, v.ephemeral); msg != "" {
+		msg := visit(v.label, v.ephemeral)
+		if msg != "" {
 			return "new error: " + msg
 		}
 	}

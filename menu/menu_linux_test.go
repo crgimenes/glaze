@@ -70,7 +70,8 @@ func TestShortcutsMatchKeysAndModifiers(t *testing.T) {
 		}
 	}
 	want := "reload reload reload redo back f5"
-	if s := strings.Join(got, " "); s != want {
+	s := strings.Join(got, " ")
+	if s != want {
 		t.Errorf("ran %q, want %q", s, want)
 	}
 }

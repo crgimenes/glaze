@@ -701,7 +701,8 @@ func openURLsScenario() string {
 func TestOnOpenURLs(t *testing.T) {
 	got, _ := resOpenURLs.Load().(string)
 	requireGUI(t, got)
-	if want := "https://example.com/a https://example.com/b?q=1"; got != want {
+	want := "https://example.com/a https://example.com/b?q=1"
+	if got != want {
 		t.Fatalf("OnOpenURLs: got %q, want %q", got, want)
 	}
 }

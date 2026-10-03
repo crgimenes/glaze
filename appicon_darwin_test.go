@@ -18,7 +18,8 @@ func swatch(t *testing.T) []byte {
 		}
 	}
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
+	err := png.Encode(&buf, img)
+	if err != nil {
 		t.Fatalf("encoding the swatch: %v", err)
 	}
 	return buf.Bytes()
@@ -28,7 +29,8 @@ func swatch(t *testing.T) []byte {
 // way to know, since nothing about the call fails when AppKit quietly refuses
 // the bytes.
 func TestSetAppIconReachesTheApplication(t *testing.T) {
-	if err := SetAppIcon(swatch(t)); err != nil {
+	err := SetAppIcon(swatch(t))
+	if err != nil {
 		t.Fatalf("SetAppIcon: %v", err)
 	}
 	app := class("NSApplication").Send(sel("sharedApplication"))
@@ -46,10 +48,12 @@ func TestSetAppIconReachesTheApplication(t *testing.T) {
 // An icon that is not an image must be reported, not silently ignored: a
 // caller passing the wrong bytes deserves to hear about it once.
 func TestSetAppIconRejectsWhatIsNotAnImage(t *testing.T) {
-	if err := SetAppIcon(nil); err == nil {
+	err := SetAppIcon(nil)
+	if err == nil {
 		t.Error("an empty icon was accepted")
 	}
-	if err := SetAppIcon([]byte("this is not a png")); err == nil {
+	err = SetAppIcon([]byte("this is not a png"))
+	if err == nil {
 		t.Error("a string was accepted as an image")
 	}
 }

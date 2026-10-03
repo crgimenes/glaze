@@ -13,11 +13,13 @@ func TestNewestRuntimeDLL(t *testing.T) {
 	dir := t.TempDir()
 	mk := func(version string, withDLL bool) {
 		d := filepath.Join(dir, version, "EBWebView", arch())
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		err := os.MkdirAll(d, 0o755)
+		if err != nil {
 			t.Fatal(err)
 		}
 		if withDLL {
-			if err := os.WriteFile(filepath.Join(d, "EmbeddedBrowserWebView.dll"), nil, 0o644); err != nil {
+			err = os.WriteFile(filepath.Join(d, "EmbeddedBrowserWebView.dll"), nil, 0o644)
+			if err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -26,7 +28,8 @@ func TestNewestRuntimeDLL(t *testing.T) {
 	mk("154.0.4258.37", true) // the runtime a self-update left behind
 	mk("200.0.9999.1", false) // newer folder without the DLL: ignored
 	mk("154.0.4258.9", true)  // older build of the same major: loses
-	if err := os.WriteFile(filepath.Join(dir, "SetupMetrics"), nil, 0o644); err != nil {
+	err := os.WriteFile(filepath.Join(dir, "SetupMetrics"), nil, 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -36,7 +39,8 @@ func TestNewestRuntimeDLL(t *testing.T) {
 		t.Fatalf("newestRuntimeDLL = %q, %v; want %q, true", got, ok, want)
 	}
 
-	if _, ok := newestRuntimeDLL(filepath.Join(dir, "missing")); ok {
+	_, ok = newestRuntimeDLL(filepath.Join(dir, "missing"))
+	if ok {
 		t.Fatal("newestRuntimeDLL on a missing dir reported a runtime")
 	}
 }
