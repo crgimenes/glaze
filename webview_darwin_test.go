@@ -518,10 +518,36 @@ func raiseScenario() string {
 	}
 
 	w.Raise()
-	if win.Send(sel("isKeyWindow")) == 0 {
+	if !becameKey(w.(*webview), win, 2*time.Second) {
 		return "Raise left the window not key"
 	}
 	return "raise-ok"
+}
+
+// becameKey pumps AppKit events until the window is key or limit passes.
+// Raise asks the window server to activate the application, and the window
+// only becomes key once that is processed, so the result is not observable on
+// the line after the call: asserting it there passes or fails depending on how
+// busy the machine is. The scenarios hold the main thread with no run loop of
+// their own, which is why this pumps instead of sleeping.
+func becameKey(w *webview, win objc.ID, limit time.Duration) bool {
+	deadline := time.Now().Add(limit)
+	for {
+		if win.Send(sel("isKeyWindow")) != 0 {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		autorelease(func() {
+			until := class("NSDate").Send(sel("dateWithTimeIntervalSinceNow:"), 0.02)
+			ev := w.app.Send(sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
+				nsEventMaskAny, until, nsstr("kCFRunLoopDefaultMode"), true)
+			if ev != 0 {
+				w.app.Send(sel("sendEvent:"), ev)
+			}
+		})
+	}
 }
 
 func TestRaiseMakesTheWindowKey(t *testing.T) {
