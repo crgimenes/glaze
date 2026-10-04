@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -98,7 +99,9 @@ var (
 	webkitRegisterHandler3  func(manager uintptr, name string, world uintptr)
 
 	webkitWebViewNew                              func() uintptr
-	webkitWebViewNewEphemeral                     func() (webview, source uintptr) // set in registerEphemeralFuncs
+	webkitWebViewNewEphemeral                     func(sandbox bool) (webview, source uintptr) // set in registerEphemeralFuncs
+	webkitWebContextGetDefault                    func() uintptr
+	webkitWebContextSetSandboxEnabled             func(ctx uintptr, enabled bool) // nil on 6.0, which always sandboxes
 	webkitWebViewGetUserContentManager            func(webview uintptr) uintptr
 	webkitWebViewGetSettings                      func(webview uintptr) uintptr
 	webkitSettingsSetJavascriptCanAccessClipboard func(settings uintptr, enabled bool)
@@ -315,6 +318,11 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitWebViewLoadHTML, webkit, "webkit_web_view_load_html")
 		purego.RegisterLibFunc(&webkitWebViewGetURI, webkit, "webkit_web_view_get_uri")
 		purego.RegisterLibFunc(&webkitWebViewIsLoading, webkit, "webkit_web_view_is_loading")
+		purego.RegisterLibFunc(&webkitWebContextGetDefault, webkit, "webkit_web_context_get_default")
+		_, sandboxErr := purego.Dlsym(webkit, "webkit_web_context_set_sandbox_enabled")
+		if !gtk4 && sandboxErr == nil {
+			purego.RegisterLibFunc(&webkitWebContextSetSandboxEnabled, webkit, "webkit_web_context_set_sandbox_enabled")
+		}
 		_, symErr := purego.Dlsym(webkit, "webkit_settings_set_enable_back_forward_navigation_gestures")
 		if symErr == nil {
 			purego.RegisterLibFunc(&webkitSettingsSetEnableBackForwardGestures, webkit, "webkit_settings_set_enable_back_forward_navigation_gestures")
@@ -632,6 +640,7 @@ type webview struct {
 	onMediaCapture    func(origin string, camera, microphone bool) bool
 	onScriptDialog    func(ScriptDialog) (bool, string)
 	navGestures       bool
+	wantSandbox       bool // see Options.SandboxWebContent
 	onNewWindow       func(string)
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
 	// so that navigation is reported once, as a failure.
@@ -888,6 +897,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		onMediaCapture:    opts.OnMediaCapture,
 		onScriptDialog:    opts.OnScriptDialog,
 		navGestures:       opts.NavigationGestures,
+		wantSandbox:       opts.SandboxWebContent,
 		onNewWindow:       opts.OnNewWindow,
 		onDownload:        opts.OnDownload,
 		onDownloadEnd:     opts.OnDownloadDone,
@@ -935,9 +945,15 @@ func (w *webview) windowInit(window uintptr) error {
 		gSignalConnectData(w.window, "destroy", windowDestroyFn, w.id, 0, 0)
 	}
 
+	sandbox := w.wantSandbox && sandboxAvailable()
 	if w.wantEphemeral {
-		w.webview, w.ephemeral = webkitWebViewNewEphemeral()
+		w.webview, w.ephemeral = webkitWebViewNewEphemeral(sandbox)
 	} else {
+		if sandbox {
+			// Before the context starts any page process; later calls on a
+			// context already in use would be refused.
+			sandboxDefaultOnce.Do(func() { webkitWebContextSetSandboxEnabled(webkitWebContextGetDefault(), true) })
+		}
 		w.webview = webkitWebViewNew()
 	}
 	gObjectRefSink(w.webview)
@@ -1589,7 +1605,7 @@ func registerEphemeralFuncs(webkit, gobject uintptr) {
 		purego.RegisterLibFunc(&sessionNew, webkit, "webkit_network_session_new_ephemeral")
 		purego.RegisterLibFunc(&webViewType, webkit, "webkit_web_view_get_type")
 		purego.RegisterLibFunc(&objectNew, gobject, "g_object_new")
-		webkitWebViewNewEphemeral = func() (uintptr, uintptr) {
+		webkitWebViewNewEphemeral = func(bool) (uintptr, uintptr) {
 			session := sessionNew()
 			return objectNew(webViewType(), "network-session", session, 0), session
 		}
@@ -1599,8 +1615,23 @@ func registerEphemeralFuncs(webkit, gobject uintptr) {
 	var webViewNewWithContext func(ctx uintptr) uintptr
 	purego.RegisterLibFunc(&contextNew, webkit, "webkit_web_context_new_ephemeral")
 	purego.RegisterLibFunc(&webViewNewWithContext, webkit, "webkit_web_view_new_with_context")
-	webkitWebViewNewEphemeral = func() (uintptr, uintptr) {
+	webkitWebViewNewEphemeral = func(sandbox bool) (uintptr, uintptr) {
 		ctx := contextNew()
+		if sandbox {
+			webkitWebContextSetSandboxEnabled(ctx, true)
+		}
 		return webViewNewWithContext(ctx), ctx
 	}
+}
+
+var sandboxDefaultOnce sync.Once
+
+// sandboxAvailable: WebKitGTK 4.1 can sandbox (6.0 always does, and has no
+// switch) and bubblewrap is there to do it.
+func sandboxAvailable() bool {
+	if webkitWebContextSetSandboxEnabled == nil {
+		return false
+	}
+	_, err := exec.LookPath("bwrap")
+	return err == nil
 }

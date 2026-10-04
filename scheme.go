@@ -160,6 +160,15 @@ type Options struct {
 	// dialog. macOS 12+ and Linux; never called on Windows.
 	OnMediaCapture func(origin string, camera, microphone bool) bool
 
+	// SandboxWebContent runs page content in WebKitGTK's bubblewrap sandbox
+	// on Linux with WebKitGTK 4.1 (GTK3), where it is off unless asked for:
+	// for an app that shows pages it does not control. It needs bwrap
+	// installed, and stays off without it, as WebKit could not start the
+	// page's process otherwise. WebKitGTK 6.0 (GTK4) always sandboxes, and so
+	// does macOS; ignored there and on Windows. The first web view decides for
+	// the process's shared context.
+	SandboxWebContent bool
+
 	// NavigationGestures turns on the trackpad's swipe between pages: two
 	// fingers sideways go back and forward, as in Safari. Off by default: in
 	// an app with routes of its own a swipe would move between them. macOS and
