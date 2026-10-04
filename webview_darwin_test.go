@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 		resRevealTiming.Store(revealTimingScenario())
 		resSpinner.Store(spinnerScenario())
 		resHeldBackInput.Store(heldBackInputScenario())
+		resFrameAutosave.Store(frameAutosaveScenario())
 		resContextMenu.Store(contextMenuScenario())
 		resMediaCapture.Store(mediaCaptureScenario())
 		resNavigation.Store(navigationScenario())
@@ -833,4 +834,47 @@ func TestHeldBackInput(t *testing.T) {
 // (NSWindowOcclusionStateVisible).
 func windowVisible(w *webview) bool {
 	return objc.Send[uint](w.window, sel("occlusionState"))&(1<<1) != 0
+}
+
+var resFrameAutosave atomic.Value // string
+
+// frameAutosaveScenario moves a window to a known frame and closes it; a
+// second window with the same FrameAutosaveName must open there, its SetSize
+// notwithstanding. The saved key is removed afterwards.
+func frameAutosaveScenario() string {
+	name := fmt.Sprintf("glaze-test-%d", time.Now().UnixNano())
+	defer performOnMain(func() {
+		class("NSUserDefaults").Send(sel("standardUserDefaults")).Send(sel("removeObjectForKey:"), nsstr("NSWindow Frame "+name))
+	})
+	want := cgRect{cgPoint{140, 160}, cgSize{700, 500}}
+	frame := func() cgRect {
+		v, err := NewWithOptions(Options{FrameAutosaveName: name})
+		if err != nil {
+			return cgRect{}
+		}
+		defer v.Destroy()
+		w := v.(*webview)
+		w.SetSize(400, 300, HintNone)
+		var f cgRect
+		performOnMain(func() { f = objc.Send[cgRect](w.window, sel("frame")) })
+		return f
+	}
+	v, err := NewWithOptions(Options{FrameAutosaveName: name})
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	w := v.(*webview)
+	w.SetSize(400, 300, HintNone)
+	performOnMain(func() { w.window.Send(sel("setFrame:display:"), want, true) })
+	v.Destroy()
+	got := frame()
+	return fmt.Sprintf("restored=%v", got == want)
+}
+
+func TestFrameAutosave(t *testing.T) {
+	got, _ := resFrameAutosave.Load().(string)
+	requireGUI(t, got)
+	if got != "restored=true" {
+		t.Fatalf("frame autosave: %s", got)
+	}
 }

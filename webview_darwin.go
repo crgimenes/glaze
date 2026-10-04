@@ -187,6 +187,11 @@ func registerClasses() error {
 				Cmd: sel("application:openURLs:"),
 				Fn: func(self objc.ID, _cmd objc.SEL, app, urls objc.ID) {
 					callOpenURLs(currentOpenURLs(), nsURLStrings(urls))
+					w := lookupEngine(self)
+					if w != nil {
+						w.urlsArrived = true
+						w.endURLWait()
+					}
 				},
 			},
 			{
@@ -194,7 +199,7 @@ func registerClasses() error {
 				Fn: func(self objc.ID, _cmd objc.SEL, notification objc.ID) {
 					w := lookupEngine(self)
 					if w != nil {
-						w.onApplicationDidFinishLaunching(notification.Send(sel("object")))
+						w.onApplicationDidFinishLaunching(notification)
 					}
 				},
 			},
@@ -619,6 +624,12 @@ type webview struct {
 	committed      bool
 	pageURL        string
 	onContentShown func()
+	// frameName: see Options.FrameAutosaveName; applied by the first SetSize.
+	frameName string
+	// awaitingURLs holds the launch loop open for the URL it was launched
+	// for, unless urlsArrived already; main thread only.
+	awaitingURLs   bool
+	urlsArrived    bool
 	onMediaCapture func(origin string, camera, microphone bool) bool
 	onNewWindow    func(string)
 	ephemeral      bool
@@ -722,6 +733,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		onNavigationStart: opts.OnNavigationStart,
 		onURLChange:       opts.OnURLChange,
 		onContentShown:    opts.OnContentShown,
+		frameName:         opts.FrameAutosaveName,
 		onMediaCapture:    opts.OnMediaCapture,
 		onNewWindow:       opts.OnNewWindow,
 		ephemeral:         opts.Ephemeral,
@@ -797,11 +809,43 @@ func appFinishedLaunching() bool {
 	return app.Send(sel("isFinishedLaunching")) != 0
 }
 
-func (w *webview) onApplicationDidFinishLaunching(app objc.ID) {
-	if w.ownsWindow {
+// urlWait bounds how long a launch to open a URL waits for it.
+const urlWait = 2 * time.Second
+
+func (w *webview) onApplicationDidFinishLaunching(notification objc.ID) {
+	switch {
+	case !w.ownsWindow:
+	case currentOpenURLs() != nil && !w.urlsArrived && launchedToOpen(notification):
+		// Since macOS 27 the URL a launch is for comes after this callback
+		// (before, it came first); keep the temporary loop running until it
+		// does, so OnOpenURLs still gets it before NewWithOptions returns.
+		w.awaitingURLs = true
+		time.AfterFunc(urlWait, func() { dispatchMain(w.endURLWait) })
+	default:
 		w.stopRunLoop()
 	}
-	w.finishLaunching(app)
+	w.finishLaunching(notification.Send(sel("object")))
+}
+
+// launchedToOpen reports a launch to open a URL or a file (or print, or run a
+// Service): NSApplicationLaunchIsDefaultLaunchKey is NO then.
+func launchedToOpen(notification objc.ID) bool {
+	info := notification.Send(sel("userInfo"))
+	if info == 0 {
+		return false
+	}
+	v := info.Send(sel("objectForKey:"), nsstr("NSApplicationLaunchIsDefaultLaunchKey"))
+	return v != 0 && !objc.Send[bool](v, sel("boolValue"))
+}
+
+// endURLWait ends the temporary loop held open by a launch to open a URL,
+// once: the URL came, or urlWait ran out.
+func (w *webview) endURLWait() {
+	if !w.awaitingURLs {
+		return
+	}
+	w.awaitingURLs = false
+	w.stopRunLoop()
 }
 
 // finishLaunching is what the delegate callback does apart from stopping the
@@ -1120,9 +1164,35 @@ func (w *webview) SetSize(width, height int, hint Hint) {
 				w.window.Send(sel("setContentSize:"), size)
 			}
 			w.window.Send(sel("center"))
+			if !w.isSizeSet && w.frameName != "" {
+				w.restoreFrame()
+			}
 		})
 	})
 	w.isSizeSet = true
+}
+
+// restoreFrame takes the frame saved under frameName, if any. A window opened
+// alone keeps it saved from then on; one opened beside other running instances
+// of this app (each its own process, all opening on the same spot) steps clear
+// of them and saves nothing, or every launch would drift further.
+func (w *webview) restoreFrame() {
+	name := nsstr(w.frameName)
+	w.window.Send(sel("setFrameUsingName:"), name)
+	others := 0
+	id := class("NSBundle").Send(sel("mainBundle")).Send(sel("bundleIdentifier"))
+	if id != 0 {
+		running := class("NSRunningApplication").Send(sel("runningApplicationsWithBundleIdentifier:"), id)
+		others = objc.Send[int](running, sel("count")) - 1
+	}
+	if others <= 0 {
+		w.window.Send(sel("setFrameAutosaveName:"), name)
+		return
+	}
+	const step, steps = 24, 8
+	f := objc.Send[cgRect](w.window, sel("frame"))
+	off := float64(others%steps) * step
+	w.window.Send(sel("setFrameTopLeftPoint:"), cgPoint{f.Origin.X + off, f.Origin.Y + f.Size.Height - off})
 }
 
 // send runs a no-argument WKWebView method on the main thread.

@@ -150,6 +150,13 @@ type Options struct {
 	// dialog. macOS 12+ and Linux; never called on Windows.
 	OnMediaCapture func(origin string, camera, microphone bool) bool
 
+	// FrameAutosaveName, on macOS, makes the window remember its size and
+	// position under this name: the first SetSize gives the size only when
+	// nothing is saved yet. A window opened while other instances of the same
+	// app are running is moved down and right of where it would go, so it does
+	// not hide theirs, and leaves the saved frame alone. Ignored elsewhere.
+	FrameAutosaveName string
+
 	// Ephemeral keeps the web view's website data -- cookies, local storage,
 	// cache -- in memory only: it starts with nothing from earlier runs and
 	// leaves nothing behind. Each ephemeral web view gets its own store.
