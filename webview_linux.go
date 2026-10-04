@@ -374,20 +374,22 @@ func newCallbacks() {
 		}
 		switch event {
 		case webkitLoadStarted:
+			w.loadStarted()
 			callURL(w.onNavigationStart, cstr(webkitWebViewGetURI(w.webview)))
 		case webkitLoadCommitted:
+			w.loadCommitted(cstr(webkitWebViewGetURI(w.webview)))
 			w.revealContent()
 		case webkitLoadFinished:
+			w.loadEnded()
 			w.onLoadFinished()
 		}
 		return 0
 	})
-	// notify::uri(GObject*, GParamSpec*, gpointer). A load moves the URI
-	// too, but while loading: that one ends in OnNavigation.
+	// notify::uri(GObject*, GParamSpec*, gpointer).
 	uriChangedFn = purego.NewCallback(func(webview, pspec, userData uintptr) uintptr {
 		w := lookupEngine(userData)
-		if w != nil && !webkitWebViewIsLoading(webview) {
-			callURL(w.onURLChange, cstr(webkitWebViewGetURI(webview)))
+		if w != nil {
+			w.urlChanged(cstr(webkitWebViewGetURI(webview)), webkitWebViewIsLoading(webview))
 		}
 		return 0
 	})
@@ -580,6 +582,9 @@ type webview struct {
 	// onNavigationStart: see Options.OnNavigationStart.
 	onNavigationStart func(string)
 	onURLChange       func(string)
+	committed         bool   // see loadStarted
+	pageURL           string // see loadStarted
+	onContentShown    func()
 	onMediaCapture    func(origin string, camera, microphone bool) bool
 	onNewWindow       func(string)
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
@@ -833,6 +838,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		onNavigation:      opts.OnNavigation,
 		onNavigationStart: opts.OnNavigationStart,
 		onURLChange:       opts.OnURLChange,
+		onContentShown:    opts.OnContentShown,
 		onMediaCapture:    opts.OnMediaCapture,
 		onNewWindow:       opts.OnNewWindow,
 		onDownload:        opts.OnDownload,
@@ -888,7 +894,7 @@ func (w *webview) windowInit(window uintptr) error {
 	}
 	gObjectRefSink(w.webview)
 	w.manager = webkitWebViewGetUserContentManager(w.webview)
-	if w.contentHidden || w.onNavigation != nil || w.onNavigationStart != nil {
+	if w.contentHidden || w.onNavigation != nil || w.onNavigationStart != nil || w.onURLChange != nil {
 		gSignalConnectData(w.webview, "load-changed", loadChangedFn, w.id, 0, 0)
 	}
 	if w.onURLChange != nil {
@@ -1019,6 +1025,7 @@ func (w *webview) Navigate(url string) {
 	if url == "" {
 		url = "about:blank"
 	}
+	w.loadStarted()
 	webkitWebViewLoadURI(w.webview, url)
 }
 
@@ -1314,6 +1321,7 @@ func (w *webview) revealContent() {
 	}
 	w.contentHidden = false
 	w.removeSpinner()
+	callShown(w.onContentShown)
 	if !w.isWindowShown {
 		return // windowShow will show it with the right visibility
 	}

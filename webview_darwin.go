@@ -614,8 +614,11 @@ type webview struct {
 	// onNavigationStart: see Options.OnNavigationStart.
 	onNavigationStart func(string)
 	// onURLChange: see Options.OnURLChange; set, navDelegate observes the
-	// web view's URL.
+	// web view's URL. committed and pageURL: see loadStarted.
 	onURLChange    func(string)
+	committed      bool
+	pageURL        string
+	onContentShown func()
 	onMediaCapture func(origin string, camera, microphone bool) bool
 	onNewWindow    func(string)
 	ephemeral      bool
@@ -718,6 +721,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		onNavigation:      opts.OnNavigation,
 		onNavigationStart: opts.OnNavigationStart,
 		onURLChange:       opts.OnURLChange,
+		onContentShown:    opts.OnContentShown,
 		onMediaCapture:    opts.OnMediaCapture,
 		onNewWindow:       opts.OnNewWindow,
 		ephemeral:         opts.Ephemeral,
@@ -1171,6 +1175,7 @@ func (w *webview) Navigate(url string) {
 		autorelease(func() {
 			nsurl := class("NSURL").Send(sel("URLWithString:"), nsstr(url))
 			req := class("NSURLRequest").Send(sel("requestWithURL:"), nsurl)
+			w.loadStarted()
 			w.webView.Send(sel("loadRequest:"), req)
 		})
 	})
@@ -1489,6 +1494,7 @@ func (w *webview) revealContent() {
 	}
 	w.webView.Send(sel("setAlphaValue:"), float64(1))
 	w.window.Send(sel("makeFirstResponder:"), w.webView)
+	callShown(w.onContentShown)
 }
 
 // paintScript tells glaze when a held-back page first paints, two frames
@@ -1728,6 +1734,7 @@ func registerNavigationClasses() error {
 		if w == nil {
 			return
 		}
+		w.loadEnded()
 		w.revealContent()
 		if nsErr != 0 && isCancelled(nsErr) {
 			return
@@ -1744,6 +1751,7 @@ func registerNavigationClasses() error {
 		}
 		w.provisionalURL = absoluteString(wv.Send(sel("URL")))
 		if started {
+			w.loadStarted()
 			callURL(w.onNavigationStart, w.provisionalURL)
 		}
 	}
@@ -1802,13 +1810,21 @@ func registerNavigationClasses() error {
 				Fn:  func(self objc.ID, _cmd objc.SEL, wv, nav, err objc.ID) { ended(self, wv, err) },
 			},
 			{
-				// KVO of the web view's URL. A load moves it too, but while
-				// loading: that one ends in OnNavigation.
+				Cmd: sel("webView:didCommitNavigation:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, nav objc.ID) {
+					w := lookupEngine(self)
+					if w != nil {
+						w.loadCommitted(absoluteString(wv.Send(sel("URL"))))
+					}
+				},
+			},
+			{
+				// KVO of the web view's URL.
 				Cmd: sel("observeValueForKeyPath:ofObject:change:context:"),
 				Fn: func(self objc.ID, _cmd objc.SEL, keyPath, wv, change objc.ID, context uintptr) {
 					w := lookupEngine(self)
-					if w != nil && !objc.Send[bool](wv, sel("isLoading")) {
-						callURL(w.onURLChange, absoluteString(wv.Send(sel("URL"))))
+					if w != nil {
+						w.urlChanged(absoluteString(wv.Send(sel("URL"))), objc.Send[bool](wv, sel("isLoading")))
 					}
 				},
 			},

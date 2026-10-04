@@ -86,12 +86,19 @@ type Options struct {
 	// reported. macOS and Linux; never called on Windows.
 	OnNavigationStart func(url string)
 
-	// OnURLChange is called on the UI thread when the page on screen changes
-	// its URL without loading a new document: history.pushState or
-	// replaceState, a fragment link, back or forward between entries of the
-	// same document. A load reports its URL through OnNavigation instead.
-	// macOS and Linux; never called on Windows.
+	// OnURLChange is called on the UI thread with the URL of the page on
+	// screen each time it changes: when a navigation commits a new document
+	// (after any redirect, long before the load finishes), and when the page
+	// moves its URL without loading -- history.pushState or replaceState, a
+	// fragment link, back or forward within the same document. A navigation
+	// that fails or is cancelled before committing leaves the page, and its
+	// URL, as they were. macOS and Linux; never called on Windows.
 	OnURLChange func(url string)
+
+	// OnContentShown is called on the UI thread when HideUntilLoaded shows
+	// the web view (see there for when that is). Only with HideUntilLoaded.
+	// macOS and Linux; never called on Windows.
+	OnContentShown func()
 
 	// OnNewWindow receives the URL of a page's request for a new window (a
 	// target=_blank link, window.open). glaze never opens the window itself,

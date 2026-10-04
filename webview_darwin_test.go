@@ -68,6 +68,7 @@ func TestMain(m *testing.M) {
 		resMediaCapture.Store(mediaCaptureScenario())
 		resNavigation.Store(navigationScenario())
 		resURLChange.Store(urlChangeScenario())
+		resURLCommit.Store(urlCommitScenario())
 		resMediaOrigin.Store(mediaOriginScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())

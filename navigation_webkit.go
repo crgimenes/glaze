@@ -22,6 +22,36 @@ func callURL(f func(string), url string) {
 	f(url)
 }
 
+func callShown(f func()) {
+	if f == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	f()
+}
+
+// The URL of the page on screen, for OnURLChange. While a load is in flight
+// the engine's URL is first its target, which may still fail -- set as soon
+// as the app asks, before the engine reports the start -- so during a load a
+// change counts only once that load committed. Outside a load (same-document
+// moves) a change counts as it comes; repeats never do.
+func (w *webview) loadStarted() { w.committed = false }
+
+func (w *webview) loadCommitted(url string) {
+	w.committed = true
+	w.urlChanged(url, true)
+}
+
+func (w *webview) loadEnded() { w.committed = false }
+
+func (w *webview) urlChanged(url string, loading bool) {
+	if loading && !w.committed || url == "" || url == w.pageURL {
+		return
+	}
+	w.pageURL = url
+	callURL(w.onURLChange, url)
+}
+
 func callFind(f func(bool), found bool) {
 	if f == nil {
 		return
