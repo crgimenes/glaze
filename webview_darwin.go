@@ -1614,12 +1614,14 @@ func (w *webview) revealContent() {
 }
 
 // paintScript tells glaze when a held-back page first paints, two frames
-// later so the paint is on screen. It runs in a content world of its own:
-// the page cannot reach the handler, and it posts nothing but the signal.
+// later so the paint is on screen, or 150 ms later if frames stop (a display
+// that is not refreshing pauses them; the page would wait for the finish).
+// It runs in a content world of its own: the page cannot reach the handler,
+// and it posts nothing but the signal.
 const paintScript = `(function(){try{new PerformanceObserver(function(l,o){` +
 	`if(!l.getEntriesByName("first-contentful-paint").length)return;o.disconnect();` +
-	`requestAnimationFrame(function(){requestAnimationFrame(function(){` +
-	`webkit.messageHandlers.glazePaint.postMessage(0)})})` +
+	`var sent=false;function post(){if(sent)return;sent=true;webkit.messageHandlers.glazePaint.postMessage(0)}` +
+	`requestAnimationFrame(function(){requestAnimationFrame(post)});setTimeout(post,150)` +
 	`}).observe({type:"paint",buffered:true})}catch(e){}})()`
 
 // holdBack keeps the web view out of sight until its page first paints, or
