@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -118,12 +117,12 @@ func revealTimingScenario() string {
 	return fmt.Sprintf("shown before finish=%v", finishedAt.Sub(revealedAt) > time.Second)
 }
 
-// Linux shows the page when it commits; macOS, where WKWebView paints white
-// until the first paint, waits for the finish.
+// Linux shows the page when it commits, macOS at its first paint: both long
+// before a slow image lets the navigation finish.
 func TestRevealTiming(t *testing.T) {
 	got, _ := resRevealTiming.Load().(string)
 	requireGUI(t, got)
-	want := fmt.Sprintf("shown before finish=%v", runtime.GOOS == "linux")
+	want := "shown before finish=true"
 	if got != want {
 		t.Fatalf("reveal timing: %s, want %s", got, want)
 	}

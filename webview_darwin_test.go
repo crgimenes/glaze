@@ -63,6 +63,7 @@ func TestMain(m *testing.M) {
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resRevealTiming.Store(revealTimingScenario())
 		resSpinner.Store(spinnerScenario())
+		resHeldBackInput.Store(heldBackInputScenario())
 		resContextMenu.Store(contextMenuScenario())
 		resMediaCapture.Store(mediaCaptureScenario())
 		resNavigation.Store(navigationScenario())
@@ -788,5 +789,41 @@ func TestContextMenuDropsDeadDownloads(t *testing.T) {
 	want := "firstMouse=false left=WKMenuItemIdentifierCopyLink | firstMouse=true left=WKMenuItemIdentifierCopyLink"
 	if got != want {
 		t.Fatalf("context menu: got %q, want %q", got, want)
+	}
+}
+
+var resHeldBackInput atomic.Value // string
+
+// heldBackInputScenario checks where a click at the window's center and the
+// keys go while HideUntilLoaded holds the page back, and after it shows.
+func heldBackInputScenario() string {
+	v, err := NewWithOptions(Options{HideUntilLoaded: true})
+	if err != nil {
+		return "new error: " + err.Error()
+	}
+	defer v.Destroy()
+	w := v.(*webview)
+	var out []string
+	probe := func(stage string) {
+		performOnMain(func() {
+			f := objc.Send[cgRect](w.widget, sel("frame"))
+			hit := w.widget.Send(sel("hitTest:"), cgPoint{f.Origin.X + f.Size.Width/2, f.Origin.Y + f.Size.Height/2})
+			inPage := hit != 0 && objc.Send[bool](hit, sel("isDescendantOf:"), w.webView)
+			keys := w.window.Send(sel("firstResponder")) == w.webView
+			out = append(out, fmt.Sprintf("%s click-in-page=%v keys-in-page=%v", stage, inPage, keys))
+		})
+	}
+	probe("held")
+	performOnMain(w.revealContent)
+	probe("shown")
+	return strings.Join(out, " | ")
+}
+
+func TestHeldBackInput(t *testing.T) {
+	got, _ := resHeldBackInput.Load().(string)
+	requireGUI(t, got)
+	want := "held click-in-page=false keys-in-page=false | shown click-in-page=true keys-in-page=true"
+	if got != want {
+		t.Fatalf("input while held back:\n got %s\nwant %s", got, want)
 	}
 }

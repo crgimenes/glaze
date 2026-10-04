@@ -129,6 +129,7 @@ var (
 	dispatchWork   uintptr
 
 	appDelegateClass, scriptHandlerClass, windowDelegateClass, uiDelegateClass objc.Class
+	paintHandlerClass, paintCoverClass                                         objc.Class
 	schemeHandlerClass, firstMouseViewClass, navDelegateClass                  objc.Class
 	webViewClass                                                               objc.Class
 	downloadDelegateClass                                                      objc.Class
@@ -216,6 +217,34 @@ func registerClasses() error {
 		}})
 	if err != nil {
 		return fmt.Errorf("webview: script handler class: %w", err)
+	}
+
+	paintHandlerClass, err = objc.RegisterClass(
+		"GlazePaintHandler", objc.GetClass("NSObject"),
+		[]*objc.Protocol{objc.GetProtocol("WKScriptMessageHandler")}, nil,
+		[]objc.MethodDef{{
+			Cmd: sel("userContentController:didReceiveScriptMessage:"),
+			Fn: func(self objc.ID, _cmd objc.SEL, ucc objc.ID, message objc.ID) {
+				w := lookupEngine(self)
+				if w != nil {
+					w.revealContent()
+				}
+			},
+		}})
+	if err != nil {
+		return fmt.Errorf("webview: paint handler class: %w", err)
+	}
+
+	// The cover takes the keys while the page is held back; a plain NSView
+	// refuses them, and AppKit would hand them to the transparent web view.
+	paintCoverClass, err = objc.RegisterClass(
+		"GlazePaintCover", objc.GetClass("NSView"), nil, nil,
+		[]objc.MethodDef{{
+			Cmd: sel("acceptsFirstResponder"),
+			Fn:  func(self objc.ID, _cmd objc.SEL) bool { return true },
+		}})
+	if err != nil {
+		return fmt.Errorf("webview: paint cover class: %w", err)
 	}
 
 	windowDelegateClass, err = objc.RegisterClass(
@@ -564,6 +593,11 @@ type webview struct {
 	webView        objc.ID
 	manager        objc.ID
 	scriptHandler  objc.ID
+	// paintWorld and paintHandler carry the first paint of a held-back page
+	// (see paintScript); paintCover keeps clicks off it until then.
+	paintWorld   objc.ID
+	paintHandler objc.ID
+	paintCover   objc.ID
 
 	ownsWindow bool
 	debug      bool
@@ -859,7 +893,7 @@ func (w *webview) windowSettings(debug bool) {
 			w.webView.Send(sel("addObserver:forKeyPath:options:context:"), w.navDelegate, nsstr("URL"), uint(0), uintptr(0))
 		}
 		if w.contentHidden {
-			w.webView.Send(sel("setHidden:"), true)
+			w.holdBack()
 		}
 
 		if !w.noBridge {
@@ -876,6 +910,11 @@ func (w *webview) windowSettings(debug bool) {
 		w.widget.Send(sel("setAutoresizesSubviews:"), true)
 		w.widget.Send(sel("addSubview:"), w.webView)
 		if w.contentHidden {
+			cover := objc.ID(paintCoverClass).Send(sel("alloc")).Send(sel("initWithFrame:"), rect)
+			cover.Send(sel("setAutoresizingMask:"), uint(nsViewWidthSizable|nsViewHeightSizable))
+			w.widget.Send(sel("addSubview:"), cover)
+			cover.Send(sel("release"))
+			w.paintCover = cover
 			w.addSpinner(rect)
 		}
 
@@ -887,8 +926,13 @@ func (w *webview) windowSettings(debug bool) {
 			// AppKit's offer stops at the window itself and every keystroke is
 			// an unhandled key: the system beep. A click fixed it only because
 			// hit-testing hands the WKWebView the responder role. Hand it over
-			// at birth instead, so a freshly opened window types.
-			w.window.Send(sel("makeFirstResponder:"), w.webView)
+			// at birth instead, so a freshly opened window types. A held-back
+			// page gets it when shown: keys must not reach a page not yet seen.
+			first := w.webView
+			if w.paintCover != 0 {
+				first = w.paintCover
+			}
+			w.window.Send(sel("makeFirstResponder:"), first)
 		}
 	})
 }
@@ -1262,6 +1306,15 @@ func (w *webview) destroyOnUI() {
 			unregisterInstance(w.scriptHandler)
 			w.scriptHandler = 0
 		}
+		if w.paintHandler != 0 {
+			unregisterInstance(w.paintHandler) // owned by the manager, like scriptHandler
+			w.paintHandler = 0
+		}
+		if w.paintWorld != 0 {
+			w.paintWorld.Send(sel("release"))
+			w.paintWorld = 0
+		}
+		w.paintCover = 0 // released with widget
 		// Scheme-handler delegates are owned by the (now-released) configuration;
 		// like scriptHandler, only their registry entries need reclaiming.
 		for _, sh := range w.schemeHandlerObjs {
@@ -1322,6 +1375,7 @@ func (w *webview) rebuildScriptsLocked() {
 			addWKUserScript(w.manager, src)
 		}
 		addWKUserScript(w.manager, createBindScript(w.bindingNamesLocked()))
+		w.addPaintScript()
 	})
 }
 
@@ -1429,9 +1483,50 @@ func (w *webview) revealContent() {
 		w.spinner.Send(sel("removeFromSuperview"))
 		w.spinner = 0
 	}
-	w.webView.Send(sel("setHidden:"), false)
-	// A hidden view could not take first responder at birth.
+	if w.paintCover != 0 {
+		w.paintCover.Send(sel("removeFromSuperview"))
+		w.paintCover = 0
+	}
+	w.webView.Send(sel("setAlphaValue:"), float64(1))
 	w.window.Send(sel("makeFirstResponder:"), w.webView)
+}
+
+// paintScript tells glaze when a held-back page first paints, two frames
+// later so the paint is on screen. It runs in a content world of its own:
+// the page cannot reach the handler, and it posts nothing but the signal.
+const paintScript = `(function(){try{new PerformanceObserver(function(l,o){` +
+	`if(!l.getEntriesByName("first-contentful-paint").length)return;o.disconnect();` +
+	`requestAnimationFrame(function(){requestAnimationFrame(function(){` +
+	`webkit.messageHandlers.glazePaint.postMessage(0)})})` +
+	`}).observe({type:"paint",buffered:true})}catch(e){}})()`
+
+// holdBack keeps the web view out of sight until its page first paints, or
+// the navigation ends. Transparent rather than hidden: WebKit hands a hidden
+// view's paint to the screen only once it is shown, a white frame or two, and
+// stops its animation frames. Without WKContentWorld (before macOS 11) the
+// page shows when the navigation ends.
+func (w *webview) holdBack() {
+	w.webView.Send(sel("setAlphaValue:"), float64(0))
+	worldClass := class("WKContentWorld")
+	if worldClass == 0 {
+		return
+	}
+	w.paintWorld = worldClass.Send(sel("worldWithName:"), nsstr("glaze-paint")).Send(sel("retain"))
+	w.paintHandler = objc.ID(paintHandlerClass).Send(sel("new"))
+	registerInstance(w.paintHandler, w)
+	w.manager.Send(sel("addScriptMessageHandler:contentWorld:name:"), w.paintHandler, w.paintWorld, nsstr("glazePaint"))
+	w.paintHandler.Send(sel("release")) // the content manager holds it now
+	w.addPaintScript()
+}
+
+func (w *webview) addPaintScript() {
+	if w.paintWorld == 0 || !w.contentHidden {
+		return
+	}
+	s := class("WKUserScript").Send(sel("alloc")).Send(sel("initWithSource:injectionTime:forMainFrameOnly:inContentWorld:"),
+		nsstr(paintScript), wkInjectionTimeAtDocumentStart, true, w.paintWorld)
+	w.manager.Send(sel("addUserScript:"), s)
+	s.Send(sel("release"))
 }
 
 // navigationEvent builds the report for a navigation that ended on wv; nsErr
