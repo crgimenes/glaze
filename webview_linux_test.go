@@ -443,3 +443,5 @@ func enableMockCapture(w *webview) {
 	purego.RegisterLibFunc(&setMock, webkitLib, "webkit_settings_set_enable_mock_capture_devices")
 	setMock(webkitWebViewGetSettings(w.webview), true)
 }
+
+func windowVisible(*webview) bool { return true }

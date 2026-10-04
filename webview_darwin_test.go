@@ -828,3 +828,9 @@ func TestHeldBackInput(t *testing.T) {
 		t.Fatalf("input while held back:\n got %s\nwant %s", got, want)
 	}
 }
+
+// windowVisible reports whether any part of the window is on screen
+// (NSWindowOcclusionStateVisible).
+func windowVisible(w *webview) bool {
+	return objc.Send[uint](w.window, sel("occlusionState"))&(1<<1) != 0
+}

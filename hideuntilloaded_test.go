@@ -77,8 +77,10 @@ func revealTimingScenario() string {
 
 	var w *webview
 	var revealedAt, finishedAt time.Time
+	visible := true
 	v, err := NewWithOptions(Options{HideUntilLoaded: true, OnNavigation: func(ev NavigationEvent) {
 		finishedAt = time.Now()
+		visible = windowVisible(w)
 		if !w.contentHidden && revealedAt.IsZero() {
 			revealedAt = finishedAt // shown by the finish itself
 		}
@@ -114,7 +116,11 @@ func revealTimingScenario() string {
 	if revealedAt.IsZero() || finishedAt.IsZero() {
 		return fmt.Sprintf("revealed=%v finished=%v", !revealedAt.IsZero(), !finishedAt.IsZero())
 	}
-	return fmt.Sprintf("shown before finish=%v", finishedAt.Sub(revealedAt) > time.Second)
+	early := finishedAt.Sub(revealedAt) > time.Second
+	if !early && !visible {
+		return "window not visible"
+	}
+	return fmt.Sprintf("shown before finish=%v", early)
 }
 
 // Linux shows the page when it commits, macOS at its first paint: both long
@@ -122,6 +128,12 @@ func revealTimingScenario() string {
 func TestRevealTiming(t *testing.T) {
 	got, _ := resRevealTiming.Load().(string)
 	requireGUI(t, got)
+	if got == "window not visible" {
+		// macOS pauses an occluded window's animation frames, which the
+		// first-paint reveal waits on; a CI runner without an active display
+		// can leave the window so.
+		t.Skip("the window was not visible on screen")
+	}
 	want := "shown before finish=true"
 	if got != want {
 		t.Fatalf("reveal timing: %s, want %s", got, want)
