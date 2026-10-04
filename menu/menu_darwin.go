@@ -35,6 +35,10 @@ var (
 	callbacks  = map[int]func(){} // NSMenuItem tag -> OnClick
 	cbSeq      int
 	cbDispatch func(func()) // current Options.Dispatch, used by the action handler
+
+	// servicesMenu is the Services submenu of the menu being built, 0 when it
+	// has none; main thread only.
+	servicesMenu objc.ID
 )
 
 func ensureInit() error {
@@ -99,7 +103,11 @@ func set(items []Item, opts Options) (*Menu, error) {
 
 		app := class("NSApplication").Send(sel("sharedApplication"))
 		autorelease(func() {
+			servicesMenu = 0
 			app.Send(sel("setMainMenu:"), buildMenu(items))
+			// Also when 0: a Services menu from an earlier Set must not stay
+			// registered once the menu it was in is gone.
+			app.Send(sel("setServicesMenu:"), servicesMenu)
 		})
 	}
 
@@ -151,6 +159,15 @@ func buildItem(it Item) objc.ID {
 		item.Send(sel("setKeyEquivalentModifierMask:"), uint(mods)) // #nosec G115
 	}
 
+	if it.Services {
+		// Left to auto-enable, unlike our menus: AppKit enables each service
+		// by what the selection can send it.
+		sm := class("NSMenu").Send(sel("alloc")).Send(sel("initWithTitle:"), nsstr(it.Title))
+		sm.Send(sel("autorelease"))
+		item.Send(sel("setSubmenu:"), sm)
+		servicesMenu = sm
+		return item
+	}
 	if len(it.Submenu) > 0 {
 		item.Send(sel("setSubmenu:"), buildMenu(it.Submenu))
 		return item

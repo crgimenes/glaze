@@ -218,9 +218,10 @@ func addItem(h uintptr, it Item) {
 		appendMenuW(h, mfSeparator, 0, nil)
 		return
 	}
-	if it.Selector != "" {
-		// macOS-native responder-chain action; no Win32 equivalent. The focused
-		// control already handles editing shortcuts, so the item is skipped.
+	if it.Selector != "" || it.Services {
+		// macOS-native responder-chain action or Services menu; no Win32
+		// equivalent. The focused control already handles editing shortcuts,
+		// so the item is skipped.
 		return
 	}
 	text := utf16(it.Title)

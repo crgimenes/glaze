@@ -62,6 +62,12 @@ type Item struct {
 	// has nothing to wire.
 	Selector string
 
+	// Services, macOS only, makes this item the system Services menu: AppKit
+	// fills it with the services that can take the current selection (look up,
+	// open as a note, and so on), the focused WKWebView's included. Submenu
+	// and OnClick are ignored. Elsewhere the item is skipped: no such menu.
+	Services bool
+
 	// Submenu, when non-empty, makes this item open a sub-menu.
 	Submenu []Item
 
