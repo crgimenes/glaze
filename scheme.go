@@ -95,6 +95,16 @@ type Options struct {
 	// URL, as they were. macOS and Linux; never called on Windows.
 	OnURLChange func(url string)
 
+	// OnScriptDialog shows a page's alert(), confirm() or prompt() and returns
+	// the answer: ok for OK (confirm, prompt) and the text typed (prompt). The
+	// page waits for it. Without it the engines differ, as they always have:
+	// macOS answers as if dismissed (the alert vanishes, confirm is false,
+	// prompt null) and Linux shows WebKitGTK's own dialog. With it, a page
+	// leaving with an onbeforeunload handler on Linux just leaves, as on macOS.
+	// Called on the UI thread; may run a modal dialog. macOS and Linux; never
+	// called on Windows.
+	OnScriptDialog func(d ScriptDialog) (ok bool, text string)
+
 	// OnContentShown is called on the UI thread when HideUntilLoaded shows
 	// the web view (see there for when that is). Only with HideUntilLoaded.
 	// macOS and Linux; never called on Windows.

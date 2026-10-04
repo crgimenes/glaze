@@ -289,6 +289,32 @@ func registerClasses() error {
 				},
 			},
 			{
+				Cmd: sel("webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, message, frame, handler objc.ID) {
+					scriptDialog(self, ScriptDialog{Kind: ScriptAlert, Message: cstr(message.Send(sel("UTF8String")))})
+					invokeNativeBlock(handler, "v@?", nil)
+				},
+			},
+			{
+				Cmd: sel("webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, message, frame, handler objc.ID) {
+					ok, _ := scriptDialog(self, ScriptDialog{Kind: ScriptConfirm, Message: cstr(message.Send(sel("UTF8String")))})
+					invokeNativeBlock(handler, "v@?B", unsafe.Pointer(&ok)) // #nosec G103 -- the arg's address, for NSInvocation
+				},
+			},
+			{
+				Cmd: sel("webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:"),
+				Fn: func(self objc.ID, _cmd objc.SEL, wv, prompt, defaultText, frame, handler objc.ID) {
+					ok, text := scriptDialog(self, ScriptDialog{Kind: ScriptPrompt,
+						Message: cstr(prompt.Send(sel("UTF8String"))), Text: cstr(defaultText.Send(sel("UTF8String")))})
+					answer := objc.ID(0) // nil: prompt() returns null
+					if ok {
+						answer = nsstr(text)
+					}
+					invokeNativeBlock(handler, "v@?@", unsafe.Pointer(&answer)) // #nosec G103 -- the arg's address, for NSInvocation
+				},
+			},
+			{
 				// Returning nil creates no web view: the request goes to
 				// OnNewWindow instead of opening a window here.
 				Cmd: sel("webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:"),
@@ -474,8 +500,21 @@ func invokeNativeBlock(block objc.ID, types string, arg unsafe.Pointer) {
 	sig := class("NSMethodSignature").Send(sel("signatureWithObjCTypes:"), types)
 	inv := class("NSInvocation").Send(sel("invocationWithMethodSignature:"), sig)
 	inv.Send(sel("setTarget:"), block)
-	inv.Send(sel("setArgument:atIndex:"), arg, 1)
+	if arg != nil { // a block that takes no argument ("v@?")
+		inv.Send(sel("setArgument:atIndex:"), arg, 1)
+	}
 	inv.Send(sel("invoke"))
+}
+
+// scriptDialog answers a page's alert, confirm or prompt: through
+// OnScriptDialog, or, without one, as WebKit does when the delegate lacks the
+// method, so adding these methods changes nothing for an app that sets none.
+func scriptDialog(self objc.ID, d ScriptDialog) (ok bool, text string) {
+	w := lookupEngine(self)
+	if w == nil || w.onScriptDialog == nil {
+		return false, ""
+	}
+	return callScriptDialog(w.onScriptDialog, d)
 }
 
 // --- instance registry (replaces objc associated objects) ------------------
@@ -631,6 +670,7 @@ type webview struct {
 	awaitingURLs   bool
 	urlsArrived    bool
 	onMediaCapture func(origin string, camera, microphone bool) bool
+	onScriptDialog func(ScriptDialog) (bool, string)
 	onNewWindow    func(string)
 	ephemeral      bool
 	onDownload     func(string) string
@@ -735,6 +775,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		onContentShown:    opts.OnContentShown,
 		frameName:         opts.FrameAutosaveName,
 		onMediaCapture:    opts.OnMediaCapture,
+		onScriptDialog:    opts.OnScriptDialog,
 		onNewWindow:       opts.OnNewWindow,
 		ephemeral:         opts.Ephemeral,
 		onDownload:        opts.OnDownload,

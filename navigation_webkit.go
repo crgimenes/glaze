@@ -22,6 +22,17 @@ func callURL(f func(string), url string) {
 	f(url)
 }
 
+// callScriptDialog asks the app, with panic containment; a panic answers as a
+// dismissed dialog.
+func callScriptDialog(f func(ScriptDialog) (bool, string), d ScriptDialog) (ok bool, text string) {
+	defer func() {
+		if recover() != nil {
+			ok, text = false, ""
+		}
+	}()
+	return f(d)
+}
+
 func callShown(f func()) {
 	if f == nil {
 		return

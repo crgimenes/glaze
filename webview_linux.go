@@ -114,6 +114,11 @@ var (
 	webkitWebViewLoadHTML                         func(webview uintptr, html string, baseURI uintptr)
 	webkitWebViewGetURI                           func(webview uintptr) uintptr
 	webkitWebViewIsLoading                        func(webview uintptr) bool
+	webkitScriptDialogGetDialogType               func(dialog uintptr) int32
+	webkitScriptDialogGetMessage                  func(dialog uintptr) uintptr
+	webkitScriptDialogConfirmSetConfirmed         func(dialog uintptr, confirmed bool)
+	webkitScriptDialogPromptGetDefaultText        func(dialog uintptr) uintptr
+	webkitScriptDialogPromptSetText               func(dialog uintptr, text string)
 	webkitUserContentManagerRegisterHandler       func(manager uintptr, name string)
 	webkitUserContentManagerAddScript             func(manager, script uintptr)
 	webkitUserContentManagerRemoveAllScripts      func(manager uintptr)
@@ -162,6 +167,7 @@ var (
 	windowDestroyFn  uintptr
 	loadChangedFn    uintptr
 	uriChangedFn     uintptr
+	scriptDialogFn   uintptr
 	loadFailedFn     uintptr
 	loadTLSFailedFn  uintptr
 	createFn         uintptr
@@ -308,6 +314,11 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitWebViewLoadHTML, webkit, "webkit_web_view_load_html")
 		purego.RegisterLibFunc(&webkitWebViewGetURI, webkit, "webkit_web_view_get_uri")
 		purego.RegisterLibFunc(&webkitWebViewIsLoading, webkit, "webkit_web_view_is_loading")
+		purego.RegisterLibFunc(&webkitScriptDialogGetDialogType, webkit, "webkit_script_dialog_get_dialog_type")
+		purego.RegisterLibFunc(&webkitScriptDialogGetMessage, webkit, "webkit_script_dialog_get_message")
+		purego.RegisterLibFunc(&webkitScriptDialogConfirmSetConfirmed, webkit, "webkit_script_dialog_confirm_set_confirmed")
+		purego.RegisterLibFunc(&webkitScriptDialogPromptGetDefaultText, webkit, "webkit_script_dialog_prompt_get_default_text")
+		purego.RegisterLibFunc(&webkitScriptDialogPromptSetText, webkit, "webkit_script_dialog_prompt_set_text")
 		purego.RegisterLibFunc(&webkitUserContentManagerAddScript, webkit, "webkit_user_content_manager_add_script")
 		purego.RegisterLibFunc(&webkitUserContentManagerRemoveAllScripts, webkit, "webkit_user_content_manager_remove_all_scripts")
 		purego.RegisterLibFunc(&webkitUserScriptNew, webkit, "webkit_user_script_new")
@@ -392,6 +403,34 @@ func newCallbacks() {
 			w.urlChanged(cstr(webkitWebViewGetURI(webview)), webkitWebViewIsLoading(webview))
 		}
 		return 0
+	})
+	// gboolean script-dialog(WebKitWebView*, WebKitScriptDialog*, gpointer):
+	// TRUE, handled, keeps WebKitGTK's own dialog away.
+	scriptDialogFn = purego.NewCallback(func(webview, dialog, userData uintptr) uintptr {
+		w := lookupEngine(userData)
+		if w == nil {
+			return 0
+		}
+		d := ScriptDialog{Message: cstr(webkitScriptDialogGetMessage(dialog))}
+		switch webkitScriptDialogGetDialogType(dialog) {
+		case webkitScriptDialogAlert:
+			d.Kind = ScriptAlert
+			callScriptDialog(w.onScriptDialog, d)
+		case webkitScriptDialogConfirm:
+			d.Kind = ScriptConfirm
+			ok, _ := callScriptDialog(w.onScriptDialog, d)
+			webkitScriptDialogConfirmSetConfirmed(dialog, ok)
+		case webkitScriptDialogPrompt:
+			d.Kind = ScriptPrompt
+			d.Text = cstr(webkitScriptDialogPromptGetDefaultText(dialog))
+			ok, text := callScriptDialog(w.onScriptDialog, d)
+			if ok { // unset, prompt() returns null
+				webkitScriptDialogPromptSetText(dialog, text)
+			}
+		default: // before unload: leave, as macOS does without asking
+			webkitScriptDialogConfirmSetConfirmed(dialog, true)
+		}
+		return 1
 	})
 	loadFailedFn = purego.NewCallback(func(webview, event, failingURI, gerr, userData uintptr) uintptr {
 		w := lookupEngine(userData)
@@ -586,6 +625,7 @@ type webview struct {
 	pageURL           string // see loadStarted
 	onContentShown    func()
 	onMediaCapture    func(origin string, camera, microphone bool) bool
+	onScriptDialog    func(ScriptDialog) (bool, string)
 	onNewWindow       func(string)
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
 	// so that navigation is reported once, as a failure.
@@ -840,6 +880,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		onURLChange:       opts.OnURLChange,
 		onContentShown:    opts.OnContentShown,
 		onMediaCapture:    opts.OnMediaCapture,
+		onScriptDialog:    opts.OnScriptDialog,
 		onNewWindow:       opts.OnNewWindow,
 		onDownload:        opts.OnDownload,
 		onDownloadEnd:     opts.OnDownloadDone,
@@ -899,6 +940,9 @@ func (w *webview) windowInit(window uintptr) error {
 	}
 	if w.onURLChange != nil {
 		gSignalConnectData(w.webview, "notify::uri", uriChangedFn, w.id, 0, 0)
+	}
+	if w.onScriptDialog != nil {
+		gSignalConnectData(w.webview, "script-dialog", scriptDialogFn, w.id, 0, 0)
 	}
 	if w.onNewWindow != nil {
 		gSignalConnectData(w.webview, "create", createFn, w.id, 0, 0)
@@ -1302,6 +1346,13 @@ func (w *webview) removeSpinner() {
 const gtkAlignCenter = 3
 
 // WEBKIT_LOAD_STARTED
+// WebKitScriptDialogType; 3 is BEFORE_UNLOAD_CONFIRM.
+const (
+	webkitScriptDialogAlert   = 0
+	webkitScriptDialogConfirm = 1
+	webkitScriptDialogPrompt  = 2
+)
+
 const webkitLoadStarted = 0
 
 // WEBKIT_LOAD_COMMITTED: WebKitGTK draws nothing between it and the page's
