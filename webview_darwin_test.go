@@ -71,6 +71,7 @@ func TestMain(m *testing.M) {
 		resURLChange.Store(urlChangeScenario())
 		resURLCommit.Store(urlCommitScenario())
 		resScriptDialog.Store(scriptDialogScenario())
+		resGestures.Store(gesturesScenario())
 		resMediaOrigin.Store(mediaOriginScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
@@ -878,4 +879,9 @@ func TestFrameAutosave(t *testing.T) {
 	if got != "restored=true" {
 		t.Fatalf("frame autosave: %s", got)
 	}
+}
+
+func navGesturesOn(w *webview) (on bool) {
+	performOnMain(func() { on = objc.Send[bool](w.webView, sel("allowsBackForwardNavigationGestures")) })
+	return on
 }

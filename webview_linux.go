@@ -114,6 +114,7 @@ var (
 	webkitWebViewLoadHTML                         func(webview uintptr, html string, baseURI uintptr)
 	webkitWebViewGetURI                           func(webview uintptr) uintptr
 	webkitWebViewIsLoading                        func(webview uintptr) bool
+	webkitSettingsSetEnableBackForwardGestures    func(settings uintptr, enabled bool) // nil before WebKitGTK 2.24
 	webkitScriptDialogGetDialogType               func(dialog uintptr) int32
 	webkitScriptDialogGetMessage                  func(dialog uintptr) uintptr
 	webkitScriptDialogConfirmSetConfirmed         func(dialog uintptr, confirmed bool)
@@ -314,6 +315,10 @@ func ensureInit() error {
 		purego.RegisterLibFunc(&webkitWebViewLoadHTML, webkit, "webkit_web_view_load_html")
 		purego.RegisterLibFunc(&webkitWebViewGetURI, webkit, "webkit_web_view_get_uri")
 		purego.RegisterLibFunc(&webkitWebViewIsLoading, webkit, "webkit_web_view_is_loading")
+		_, symErr := purego.Dlsym(webkit, "webkit_settings_set_enable_back_forward_navigation_gestures")
+		if symErr == nil {
+			purego.RegisterLibFunc(&webkitSettingsSetEnableBackForwardGestures, webkit, "webkit_settings_set_enable_back_forward_navigation_gestures")
+		}
 		purego.RegisterLibFunc(&webkitScriptDialogGetDialogType, webkit, "webkit_script_dialog_get_dialog_type")
 		purego.RegisterLibFunc(&webkitScriptDialogGetMessage, webkit, "webkit_script_dialog_get_message")
 		purego.RegisterLibFunc(&webkitScriptDialogConfirmSetConfirmed, webkit, "webkit_script_dialog_confirm_set_confirmed")
@@ -626,6 +631,7 @@ type webview struct {
 	onContentShown    func()
 	onMediaCapture    func(origin string, camera, microphone bool) bool
 	onScriptDialog    func(ScriptDialog) (bool, string)
+	navGestures       bool
 	onNewWindow       func(string)
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
 	// so that navigation is reported once, as a failure.
@@ -881,6 +887,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		onContentShown:    opts.OnContentShown,
 		onMediaCapture:    opts.OnMediaCapture,
 		onScriptDialog:    opts.OnScriptDialog,
+		navGestures:       opts.NavigationGestures,
 		onNewWindow:       opts.OnNewWindow,
 		onDownload:        opts.OnDownload,
 		onDownloadEnd:     opts.OnDownloadDone,
@@ -976,6 +983,9 @@ func (w *webview) windowSettings(debug bool) {
 	// popups only from a user gesture.
 	webkitSettingsSetJavascriptCanOpenWindows(settings, false)
 	w.mediaSettings(settings)
+	if w.navGestures && webkitSettingsSetEnableBackForwardGestures != nil {
+		webkitSettingsSetEnableBackForwardGestures(settings, true)
+	}
 	if debug {
 		webkitSettingsSetEnableWriteConsoleToStdout(settings, true)
 		webkitSettingsSetEnableDeveloperExtras(settings, true)

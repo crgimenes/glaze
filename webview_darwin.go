@@ -671,6 +671,7 @@ type webview struct {
 	urlsArrived    bool
 	onMediaCapture func(origin string, camera, microphone bool) bool
 	onScriptDialog func(ScriptDialog) (bool, string)
+	navGestures    bool
 	onNewWindow    func(string)
 	ephemeral      bool
 	onDownload     func(string) string
@@ -776,6 +777,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		frameName:         opts.FrameAutosaveName,
 		onMediaCapture:    opts.OnMediaCapture,
 		onScriptDialog:    opts.OnScriptDialog,
+		navGestures:       opts.NavigationGestures,
 		onNewWindow:       opts.OnNewWindow,
 		ephemeral:         opts.Ephemeral,
 		onDownload:        opts.OnDownload,
@@ -958,6 +960,9 @@ func (w *webview) windowSettings(debug bool) {
 		wv := objc.ID(viewClass).Send(sel("alloc"))
 		wv = wv.Send(sel("initWithFrame:configuration:"), rect, config)
 		w.webView = wv.Send(sel("retain"))
+		if w.navGestures {
+			w.webView.Send(sel("setAllowsBackForwardNavigationGestures:"), true)
+		}
 		w.webView.Send(sel("setAutoresizingMask:"), uint(nsViewWidthSizable|nsViewHeightSizable))
 		if debug {
 			w.webView.Send(sel("setInspectable:"), true)

@@ -160,6 +160,12 @@ type Options struct {
 	// dialog. macOS 12+ and Linux; never called on Windows.
 	OnMediaCapture func(origin string, camera, microphone bool) bool
 
+	// NavigationGestures turns on the trackpad's swipe between pages: two
+	// fingers sideways go back and forward, as in Safari. Off by default: in
+	// an app with routes of its own a swipe would move between them. macOS and
+	// Linux (WebKitGTK 2.24 and later); ignored on Windows.
+	NavigationGestures bool
+
 	// FrameAutosaveName, on macOS, makes the window remember its size and
 	// position under this name: the first SetSize gives the size only when
 	// nothing is saved yet. A window opened while other instances of the same

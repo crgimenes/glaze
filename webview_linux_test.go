@@ -63,6 +63,7 @@ func TestMain(m *testing.M) {
 		resURLChange.Store(urlChangeScenario())
 		resURLCommit.Store(urlCommitScenario())
 		resScriptDialog.Store(scriptDialogScenario())
+		resGestures.Store(gesturesScenario())
 		resMediaOrigin.Store(mediaOriginScenario())
 		resSchemeReuse.Store(schemeReuseScenario())
 		resHistory.Store(historyScenario())
@@ -446,3 +447,9 @@ func enableMockCapture(w *webview) {
 }
 
 func windowVisible(*webview) bool { return true }
+
+func navGesturesOn(w *webview) bool {
+	var get func(settings uintptr) bool
+	purego.RegisterLibFunc(&get, webkitLib, "webkit_settings_get_enable_back_forward_navigation_gestures")
+	return get(webkitWebViewGetSettings(w.webview))
+}
