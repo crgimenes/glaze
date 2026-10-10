@@ -53,6 +53,7 @@ func TestMain(m *testing.M) {
 		resRichTypes.Store(richTypesScenario())
 		resMultiWindow.Store(multiWindowScenario())
 		resEmbed.Store(embedScenario())
+		resWindowRelease.Store(windowReleaseScenario())
 		resOpenPanel.Store(openPanelCompletionScenario())
 		resDialogCfg.Store(dialogConfigScenario())
 		resFirstMouse.Store(firstMouseScenario())
