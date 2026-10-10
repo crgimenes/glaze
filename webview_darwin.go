@@ -644,10 +644,9 @@ type webview struct {
 	paintCover   objc.ID
 
 	ownsWindow bool
-	// closedWindow/closedWidget/closedWebView keep the owned references of a
-	// window the user closed, until Destroy releases them.
+	debug      bool
+	// Owned references of a window the user closed, until Destroy releases them.
 	closedWindow, closedWidget, closedWebView objc.ID
-	debug                                     bool
 	// firstMouse makes a click on an INACTIVE window reach the page instead of
 	// only bringing the window forward. See Options.AcceptsFirstMouse.
 	firstMouse bool
@@ -911,10 +910,7 @@ func (w *webview) windowInitProceed() {
 		win = win.Send(sel("initWithContentRect:styleMask:backing:defer:"),
 			cgRect{cgPoint{0, 0}, cgSize{defaultWidth, defaultHeight}},
 			uint(nsWindowStyleMaskTitled), nsBackingStoreBuffered, false)
-		// alloc/init already gave the +1 this engine owns; Destroy releases it.
-		// AppKit must not release it a second time on close, or Destroy would
-		// free a dead object -- and a window nobody releases is never removed
-		// from the WindowServer.
+		// Destroy alone releases the +1 from alloc/init; a second release on close frees a dead object.
 		win.Send(sel("setReleasedWhenClosed:"), false)
 		w.window = win
 		w.windowDelegate = objc.ID(windowDelegateClass).Send(sel("new"))
@@ -1056,10 +1052,10 @@ func postWakeEvent(app objc.ID) {
 }
 
 func (w *webview) onWindowWillClose() {
-	// Methods guard on these handles to ignore a window that is gone, so they
-	// are cleared here -- but the references are still owned, and Destroy
-	// releases them from closed*. Dropping them unreleased leaks the window,
-	// the web view and its WebContent process.
+	if w.window == 0 {
+		return
+	}
+	// Methods ignore a gone window by its zeroed handles; the references are still owned.
 	w.closedWindow, w.closedWidget, w.closedWebView = w.window, w.widget, w.webView
 	w.spinner = 0
 	w.widget = 0
@@ -1400,39 +1396,42 @@ func (w *webview) Destroy() {
 	performOnMain(func() { w.destroyOnUI() })
 }
 
+func (w *webview) releaseWindow() {
+	userClosed := w.window == 0 && w.closedWindow != 0
+	if userClosed {
+		w.window, w.widget, w.webView = w.closedWindow, w.closedWidget, w.closedWebView
+		w.closedWindow, w.closedWidget, w.closedWebView = 0, 0, 0
+	}
+	if w.window == 0 {
+		return
+	}
+	if w.webView != 0 {
+		w.releaseWebViewDelegates()
+		w.webView.Send(sel("release"))
+		w.webView = 0
+	}
+	w.spinner = 0 // released with widget
+	if w.widget != 0 {
+		if w.widget == w.window.Send(sel("contentView")) {
+			w.window.Send(sel("setContentView:"), objc.ID(0))
+		}
+		w.widget.Send(sel("release"))
+		w.widget = 0
+	}
+	if w.ownsWindow {
+		w.window.Send(sel("setDelegate:"), objc.ID(0))
+		if !userClosed {
+			w.window.Send(sel("close"))
+			w.onWindowDestroyed(true)
+		}
+		w.window.Send(sel("release"))
+	}
+	w.window = 0
+}
+
 func (w *webview) destroyOnUI() {
 	autorelease(func() {
-		// The user already closed the window (onWindowWillClose): take the
-		// handles back so the teardown below runs in full.
-		userClosed := w.window == 0 && w.closedWindow != 0
-		if userClosed {
-			w.window, w.widget, w.webView = w.closedWindow, w.closedWidget, w.closedWebView
-			w.closedWindow, w.closedWidget, w.closedWebView = 0, 0, 0
-		}
-		if w.window != 0 {
-			if w.webView != 0 {
-				w.releaseWebViewDelegates()
-				w.webView.Send(sel("release"))
-				w.webView = 0
-			}
-			w.spinner = 0 // released with widget
-			if w.widget != 0 {
-				if w.widget == w.window.Send(sel("contentView")) {
-					w.window.Send(sel("setContentView:"), objc.ID(0))
-				}
-				w.widget.Send(sel("release"))
-				w.widget = 0
-			}
-			if w.ownsWindow {
-				w.window.Send(sel("setDelegate:"), objc.ID(0))
-				if !userClosed {
-					w.window.Send(sel("close"))
-					w.onWindowDestroyed(true)
-				}
-				w.window.Send(sel("release"))
-			}
-			w.window = 0
-		}
+		w.releaseWindow()
 		if w.windowDelegate != 0 {
 			unregisterInstance(w.windowDelegate)
 			w.windowDelegate.Send(sel("release"))
