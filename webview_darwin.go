@@ -1233,7 +1233,14 @@ func (w *webview) SetSize(width, height int, hint Hint) {
 // of them and saves nothing, or every launch would drift further.
 func (w *webview) restoreFrame() {
 	name := nsstr(w.frameName)
-	w.window.Send(sel("setFrameUsingName:"), name)
+	// setFrameUsingName: fits the saved frame to the screen the window is
+	// on, and a window not yet shown is on none, which AppKit takes as the
+	// main one: a frame saved on another display came back to the main
+	// one. So the saved frame is applied as it is when a display still
+	// holds it, and AppKit's way is the fallback (a display unplugged).
+	if !w.applySavedFrame() {
+		w.window.Send(sel("setFrameUsingName:"), name)
+	}
 	others := 0
 	id := class("NSBundle").Send(sel("mainBundle")).Send(sel("bundleIdentifier"))
 	if id != 0 {
@@ -1248,6 +1255,40 @@ func (w *webview) restoreFrame() {
 	f := objc.Send[cgRect](w.window, sel("frame"))
 	off := float64(others%steps) * step
 	w.window.Send(sel("setFrameTopLeftPoint:"), cgPoint{f.Origin.X + off, f.Origin.Y + f.Size.Height - off})
+}
+
+// applySavedFrame puts the window at the frame saved under frameName ("x y
+// w h sx sy sw sh", the window's then the screen's) when that frame still
+// overlaps a screen; false when nothing usable is saved.
+func (w *webview) applySavedFrame() bool {
+	defaults := class("NSUserDefaults").Send(sel("standardUserDefaults"))
+	saved := defaults.Send(sel("stringForKey:"), nsstr("NSWindow Frame "+w.frameName))
+	if saved == 0 {
+		return false
+	}
+	var x, y, width, height float64
+	n, err := fmt.Sscan(cstr(saved.Send(sel("UTF8String"))), &x, &y, &width, &height)
+	if err != nil || n != 4 || width <= 0 || height <= 0 {
+		return false
+	}
+	frame := cgRect{cgPoint{x, y}, cgSize{width, height}}
+	screens := class("NSScreen").Send(sel("screens"))
+	count := objc.Send[int](screens, sel("count"))
+	for i := range count {
+		screen := objc.Send[cgRect](screens.Send(sel("objectAtIndex:"), i), sel("frame"))
+		if overlaps(frame, screen) {
+			w.window.Send(sel("setFrame:display:"), frame, true)
+			return true
+		}
+	}
+	return false
+}
+
+// overlaps is true when the rects share some area: a window whose saved
+// frame is entirely off every display is not worth restoring there.
+func overlaps(a, b cgRect) bool {
+	return a.Origin.X < b.Origin.X+b.Size.Width && b.Origin.X < a.Origin.X+a.Size.Width &&
+		a.Origin.Y < b.Origin.Y+b.Size.Height && b.Origin.Y < a.Origin.Y+a.Size.Height
 }
 
 // send runs a no-argument WKWebView method on the main thread.
