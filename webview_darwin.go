@@ -1107,6 +1107,18 @@ func (w *webview) Run() {
 		<-w.closed
 		return
 	}
+	// The window is shown at birth, before the app has finished launching,
+	// and until then AppKit knows the main display only: a frame saved on
+	// another one could not be put there. Once the loop runs, it can.
+	if w.frameName != "" {
+		dispatchMain(func() {
+			w.applySavedFrame()
+			if os.Getenv("GLAZE_DEBUG_FRAME") != "" {
+				got := objc.Send[cgRect](w.window, sel("frame"))
+				fmt.Fprintf(os.Stderr, "glaze frame: with the loop running, window %+v\n", got)
+			}
+		})
+	}
 	glazeRunsLoop.Store(true)
 	w.app.Send(sel("run"))
 	glazeRunsLoop.Store(false)
@@ -1261,13 +1273,21 @@ func (w *webview) restoreFrame() {
 // w h sx sy sw sh", the window's then the screen's) when that frame still
 // overlaps a screen; false when nothing usable is saved.
 func (w *webview) applySavedFrame() bool {
+	debug := os.Getenv("GLAZE_DEBUG_FRAME") != ""
 	defaults := class("NSUserDefaults").Send(sel("standardUserDefaults"))
 	saved := defaults.Send(sel("stringForKey:"), nsstr("NSWindow Frame "+w.frameName))
 	if saved == 0 {
+		if debug {
+			fmt.Fprintf(os.Stderr, "glaze frame: nothing saved under %q\n", w.frameName)
+		}
 		return false
 	}
+	text := cstr(saved.Send(sel("UTF8String")))
 	var x, y, width, height float64
-	n, err := fmt.Sscan(cstr(saved.Send(sel("UTF8String"))), &x, &y, &width, &height)
+	n, err := fmt.Sscan(text, &x, &y, &width, &height)
+	if debug {
+		fmt.Fprintf(os.Stderr, "glaze frame: saved %q -> %d fields, err %v\n", text, n, err)
+	}
 	if err != nil || n != 4 || width <= 0 || height <= 0 {
 		return false
 	}
@@ -1276,8 +1296,15 @@ func (w *webview) applySavedFrame() bool {
 	count := objc.Send[int](screens, sel("count"))
 	for i := range count {
 		screen := objc.Send[cgRect](screens.Send(sel("objectAtIndex:"), i), sel("frame"))
+		if debug {
+			fmt.Fprintf(os.Stderr, "glaze frame: screen %d %+v overlaps %v\n", i, screen, overlaps(frame, screen))
+		}
 		if overlaps(frame, screen) {
 			w.window.Send(sel("setFrame:display:"), frame, true)
+			if debug {
+				got := objc.Send[cgRect](w.window, sel("frame"))
+				fmt.Fprintf(os.Stderr, "glaze frame: applied %+v, window now %+v\n", frame, got)
+			}
 			return true
 		}
 	}
