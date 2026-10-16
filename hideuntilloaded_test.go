@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,7 +85,8 @@ func revealTimingScenario() string {
 
 	var w *webview
 	early, finished, visible := false, false, true
-	painted := make(chan bool, 1)
+	type paint struct{ first, now float64 } // ms since the time origin; first < 0: none
+	painted := make(chan paint, 1)
 	v, err := NewWithOptions(Options{HideUntilLoaded: true, OnNavigation: func(ev NavigationEvent) {
 		finished = true
 		visible = windowVisible(w)
@@ -92,15 +94,15 @@ func revealTimingScenario() string {
 			w.Terminate()
 			return
 		}
-		w.Eval(`glazePainted(performance.getEntriesByType("paint").length > 0)`)
+		w.Eval(`var e = performance.getEntriesByName("first-contentful-paint")[0]; glazePainted(e ? e.startTime : -1, performance.now())`)
 	}})
 	if err != nil {
 		return "new error: " + err.Error()
 	}
 	defer v.Destroy()
 	w = v.(*webview)
-	err = w.Bind("glazePainted", func(p bool) {
-		painted <- p
+	err = w.Bind("glazePainted", func(first, now float64) {
+		painted <- paint{first, now}
 		w.Dispatch(w.Terminate)
 	})
 	if err != nil {
@@ -132,19 +134,24 @@ func revealTimingScenario() string {
 	if !finished {
 		return fmt.Sprintf("shown=%v, navigation never finished", early)
 	}
-	if !early {
-		select {
-		case p := <-painted:
-			if !p {
-				return "page never painted"
-			}
-		default:
-		}
-		if !visible {
-			return "window not visible"
-		}
+	if early {
+		return "shown before finish=true"
 	}
-	return fmt.Sprintf("shown before finish=%v", early)
+	if !visible {
+		return "window not visible"
+	}
+	select {
+	case p := <-painted:
+		if p.first < 0 {
+			return "page never painted"
+		}
+		if p.now-p.first < 1000 {
+			return fmt.Sprintf("page painted only at the finish (%.0f ms before it)", p.now-p.first)
+		}
+		return fmt.Sprintf("shown before finish=false (painted %.0f ms before it)", p.now-p.first)
+	default:
+		return "shown before finish=false (no paint report)"
+	}
 }
 
 // Linux shows the page when it commits, macOS at its first paint: both long
@@ -152,11 +159,11 @@ func revealTimingScenario() string {
 func TestRevealTiming(t *testing.T) {
 	got, _ := resRevealTiming.Load().(string)
 	requireGUI(t, got)
-	if got == "window not visible" || got == "page never painted" {
+	if got == "window not visible" || got == "page never painted" || strings.HasPrefix(got, "page painted only at the finish") {
 		// macOS pauses an occluded window's animation frames, and a display
-		// that is not refreshing (the CI runner, now and then) paints nothing:
-		// either way no first paint can show the view, and it shows at the
-		// finish, as designed.
+		// that is not refreshing (the CI runner, now and then) paints nothing
+		// until the view is shown: either way no first paint could show it,
+		// and it showed at the finish, as designed.
 		t.Skip(got)
 	}
 	want := "shown before finish=true"
