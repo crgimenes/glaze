@@ -642,6 +642,7 @@ type webview struct {
 	navGestures       bool
 	wantSandbox       bool // see Options.SandboxWebContent
 	onNewWindow       func(string)
+	onClose           func()
 	// loadFailed marks the load-failed that WebKitGTK follows with FINISHED,
 	// so that navigation is reported once, as a failure.
 	loadFailed bool
@@ -899,6 +900,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		navGestures:       opts.NavigationGestures,
 		wantSandbox:       opts.SandboxWebContent,
 		onNewWindow:       opts.OnNewWindow,
+		onClose:           opts.OnClose,
 		onDownload:        opts.OnDownload,
 		onDownloadEnd:     opts.OnDownloadDone,
 		downloads:         map[uintptr]*download{},
@@ -1016,6 +1018,7 @@ func (w *webview) onWindowDestroy() {
 	w.window = 0
 	w.overlay, w.spinner = 0, 0 // destroyed with the window
 	dispatchMain(func() { w.stopRunLoop = true })
+	callClose(w.onClose)
 }
 
 func (w *webview) Run() {

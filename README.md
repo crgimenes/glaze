@@ -317,6 +317,20 @@ null. Popups need a user gesture on both engines -- glaze turns off macOS's
 default of letting scripts open windows on their own. macOS and Linux; never
 called on Windows.
 
+### Knowing a window was closed
+
+```go
+w, err := glaze.NewWithOptions(glaze.Options{
+    OnClose: func() { forget(w) },
+})
+```
+
+`OnClose` runs on the UI thread when the person closes the window (its close
+button, Alt+F4, Cmd-W), once the window is gone; never after `Destroy`. With
+several windows on one loop it is how the app learns that one of them closed:
+`Run` returns for the last window only on Windows, and for the window it was
+called on only on Linux. Call `Destroy` afterwards to release the web view.
+
 ### First click on an inactive window (macOS)
 
 On macOS a click on a window that does not have focus is spent *activating* the

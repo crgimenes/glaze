@@ -118,6 +118,14 @@ type Options struct {
 	// Linux; never called on Windows.
 	OnNewWindow func(url string)
 
+	// OnClose is called on the UI thread when the person closes the window
+	// (its close button, Alt+F4, Cmd-W), once the window is gone; never after
+	// Destroy. With several windows it is how the app learns that one of
+	// them closed: Run returns for the last window only on Windows, and for
+	// the window it was called on only on Linux. Call Destroy afterwards to
+	// release the web view.
+	OnClose func()
+
 	// OnDownload decides where a download the page starts (an attachment, a
 	// file the view cannot show, a link with the download attribute) is
 	// saved: it gets the suggested file name and returns the destination

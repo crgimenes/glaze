@@ -304,6 +304,7 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 		if owned && atomic.LoadInt32(&windowCount) <= 0 {
 			postQuitMessage(0)
 		}
+		callClose(w.onClose)
 		return 0
 	case wmDestroy:
 		// Closed via the OS or by Destroy(): reclaim the engine registry entry so
@@ -416,6 +417,7 @@ type webview struct {
 	schemeAuthority map[string]string
 
 	noBridge bool
+	onClose  func()
 
 	// Window size constraints from SetSize(HintMin/HintMax); enforced in
 	// wndProc's WM_GETMINMAXINFO handler.
@@ -474,6 +476,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 		schemeHandlers:  opts.SchemeHandlers,
 		schemeAuthority: map[string]string{},
 		noBridge:        opts.NoBridge,
+		onClose:         opts.OnClose,
 	}
 	window := opts.Window
 	debug := opts.Debug

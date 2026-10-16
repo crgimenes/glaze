@@ -76,6 +76,7 @@ func TestMain(m *testing.M) {
 		resNoDownloadHandler.Store(noDownloadHandlerScenario())
 		resCookies.Store(cookiesScenario())
 		resClipboard.Store(clipboardScenario())
+		resOnClose.Store(onCloseScenario())
 		resPrgname.Store("name=" + cstr(gGetPrgname())) // never "": unset must fail, not skip
 	}
 	os.Exit(m.Run())
