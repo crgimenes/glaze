@@ -69,6 +69,13 @@ func TestRuntimeVersion(t *testing.T) {
 
 // comCall invokes a COM method through its vtable slot, as the WebView2
 // runtime does, so this exercises the callbacks' real calling convention.
+//
+// The directive is what makes the out-pointers in args safe: converted to
+// uintptr here, outside SyscallN's own protection, they would otherwise point
+// into this goroutine's stack, and the callback runs on that very stack and
+// can grow it, moving the variable and losing the write (S_OK, out still 0).
+//
+//go:uintptrescapes
 func comCall(fn uintptr, args ...uintptr) uintptr {
 	r, _, _ := purego.SyscallN(fn, args...)
 	return r
@@ -109,7 +116,10 @@ func TestEnvOptionsRegistrations(t *testing.T) {
 	}
 
 	var version uintptr
-	comCall(o.vtbl.GetTargetCompatibleBrowserVersion, opts, uintptr(unsafe.Pointer(&version)))
+	hr = comCall(o.vtbl.GetTargetCompatibleBrowserVersion, opts, uintptr(unsafe.Pointer(&version)))
+	if hr != hrOK || version == 0 {
+		t.Fatalf("GetTargetCompatibleBrowserVersion = 0x%08X, out %#x", hr, version)
+	}
 	got := comString(t, version)
 	if got != targetBrowserVersion {
 		t.Errorf("TargetCompatibleBrowserVersion = %q, want %q", got, targetBrowserVersion)
