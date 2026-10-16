@@ -62,6 +62,7 @@ var (
 	getModuleHandleW   func(name uintptr) uintptr
 	getCurrentThreadID func() uint32
 	registerClassExW   func(wc *wndClassExW) uint16
+	extractIconExW     func(file *uint16, index int32, big, small *uintptr, n uint32) uint32
 	createWindowExW    func(exStyle uint32, class, name *uint16, style uint32, x, y, w, h int32, parent, menu, inst, param uintptr) uintptr
 	defWindowProcW     func(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr
 	getMessageW        func(m *msgStruct, hwnd uintptr, min, max uint32) int32
@@ -96,12 +97,12 @@ type wndClassExW struct {
 	_             int32 // cbClsExtra
 	_             int32 // cbWndExtra
 	hInstance     uintptr
-	_             uintptr // hIcon
+	hIcon         uintptr
 	_             uintptr // hCursor
 	_             uintptr // hbrBackground
 	_             *uint16 // lpszMenuName
 	lpszClassName *uint16
-	_             uintptr // hIconSm
+	hIconSm       uintptr
 }
 
 type point struct{ X, Y int32 }
@@ -155,6 +156,11 @@ func ensureWinInit() error {
 			winInitErr = fmt.Errorf("webview: load comctl32.dll: %w", err)
 			return
 		}
+		shell32, err := syscall.LoadLibrary("shell32.dll")
+		if err != nil {
+			winInitErr = fmt.Errorf("webview: load shell32.dll: %w", err)
+			return
+		}
 		reg := func(fn any, dll syscall.Handle, name string) {
 			if winInitErr != nil {
 				return
@@ -169,6 +175,7 @@ func ensureWinInit() error {
 		reg(&getModuleHandleW, kernel32, "GetModuleHandleW")
 		reg(&getCurrentThreadID, kernel32, "GetCurrentThreadId")
 		reg(&registerClassExW, user32, "RegisterClassExW")
+		reg(&extractIconExW, shell32, "ExtractIconExW")
 		reg(&createWindowExW, user32, "CreateWindowExW")
 		reg(&defWindowProcW, user32, "DefWindowProcW")
 		reg(&getMessageW, user32, "GetMessageW")
@@ -489,6 +496,7 @@ func NewWithOptions(opts Options) (WebView, error) {
 			hInstance:     w.hinst,
 			lpszClassName: classNamePtr,
 		}
+		wc.hIcon, wc.hIconSm = exeIcons()
 		wc.cbSize = uint32(unsafe.Sizeof(wc))
 		registerClassExW(&wc) // idempotent across instances (same class name)
 

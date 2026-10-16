@@ -449,6 +449,19 @@ key from the page; `cmd` reads as `ctrl` there, and any other key reaches the
 page as usual. Selector items are skipped on Linux, where the focused widget
 already handles copy and paste. See [examples/menu](examples/menu/).
 
+### Icons
+
+Two icons look alike and are not the same thing. The **application** icon is
+the process's face in the Dock, the taskbar or the switcher: `SetAppIcon(png)`
+sets it at runtime on macOS, and reports `ErrIconUnsupported` on Windows and
+Linux, where it comes from the executable's resources or the desktop entry,
+both fixed before the process exists. The **window** icon sits in the title
+bar and on the taskbar button; macOS has none, and on Windows glaze gives its
+windows the first icon of the executable, so embed one (a `.syso` built with
+a tool such as `go-winres` or `rsrc`) and nothing else is needed; without it
+the window shows the generic one. On Linux the desktop entry or the AppImage
+provides it, and GTK4 has no call to set one from bytes at runtime.
+
 ## System tray
 
 glaze has no tray of its own, but it cooperates with one: when another
