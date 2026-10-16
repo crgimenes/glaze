@@ -61,13 +61,19 @@ func TestHideUntilLoaded(t *testing.T) {
 	}
 }
 
-// revealTimingScenario loads a page whose image takes 2 s, so the navigation
-// commits and paints long before it finishes, and reports whether the view
-// was shown more than a second before the finish.
+// revealTimingScenario loads a page whose image does not answer until the
+// view has been shown, so the navigation cannot finish before the reveal: a
+// view shown by the finish itself, or never, reads as late. The image gives up
+// after 10 s so a view never shown still gets its finish, which also tells
+// whether the window was on screen at all.
 func revealTimingScenario() string {
+	revealed := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/slow.png" {
-			time.Sleep(2 * time.Second)
+			select {
+			case <-revealed:
+			case <-time.After(10 * time.Second):
+			}
 			http.NotFound(rw, r)
 			return
 		}
@@ -76,14 +82,10 @@ func revealTimingScenario() string {
 	defer srv.Close()
 
 	var w *webview
-	var revealedAt, finishedAt time.Time
-	visible := true
+	early, finished, visible := false, false, true
 	v, err := NewWithOptions(Options{HideUntilLoaded: true, OnNavigation: func(ev NavigationEvent) {
-		finishedAt = time.Now()
+		finished = true
 		visible = windowVisible(w)
-		if !w.contentHidden && revealedAt.IsZero() {
-			revealedAt = finishedAt // shown by the finish itself
-		}
 		w.Terminate()
 	}})
 	if err != nil {
@@ -103,8 +105,9 @@ func revealTimingScenario() string {
 				return
 			case <-tick.C:
 				w.Dispatch(func() {
-					if !w.contentHidden && revealedAt.IsZero() {
-						revealedAt = time.Now()
+					if !w.contentHidden && !finished && !early {
+						early = true
+						close(revealed)
 					}
 				})
 			}
@@ -113,10 +116,9 @@ func revealTimingScenario() string {
 	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
 	w.Navigate(srv.URL)
 	w.Run()
-	if revealedAt.IsZero() || finishedAt.IsZero() {
-		return fmt.Sprintf("revealed=%v finished=%v", !revealedAt.IsZero(), !finishedAt.IsZero())
+	if !finished {
+		return fmt.Sprintf("shown=%v, navigation never finished", early)
 	}
-	early := finishedAt.Sub(revealedAt) > time.Second
 	if !early && !visible {
 		return "window not visible"
 	}
