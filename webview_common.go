@@ -295,3 +295,13 @@ func marshalJSON(msg string) string {
 	data, _ := json.Marshal(msg) // json.Marshal on string never fails
 	return string(data)
 }
+
+// callClose runs Options.OnClose, if set, with panic containment like the
+// other callbacks: an app bug must not take the UI thread's loop down.
+func callClose(f func()) {
+	if f == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	f()
+}

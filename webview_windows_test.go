@@ -22,6 +22,7 @@ var (
 	resWinRichTypes   atomic.Value // string
 	resWinEmbed       atomic.Value // string
 	resWinClose       atomic.Value // string
+	resWinOnClose     atomic.Value // string
 	resWinDialogCfg   atomic.Value // string
 )
 
@@ -54,6 +55,7 @@ func TestMain(m *testing.M) {
 		resWinEmbed.Store(winEmbedScenario())
 		resWinDialogCfg.Store(winDialogConfigScenario())
 		resNoBridge.Store(noBridgeScenario())
+		resWinOnClose.Store(winOnCloseScenario())
 		resWinClose.Store(winCloseViaUIScenario()) // last: it ends with WM_QUIT
 	}
 	os.Exit(m.Run())
@@ -205,6 +207,45 @@ func TestCloseViaUI(t *testing.T) {
 	requireGUI(t, got)
 	if got != "closed" {
 		t.Fatalf("close via UI = %q, want %q", got, "closed")
+	}
+}
+
+// winOnCloseScenario opens two windows and closes the first as the person
+// would (WM_CLOSE): only its OnClose runs, Run keeps serving the second one,
+// and Destroy never calls OnClose.
+func winOnCloseScenario() string {
+	var closedA, closedB int
+	a, err := NewWithOptions(Options{OnClose: func() { closedA++ }})
+	if err != nil {
+		return "new a: " + err.Error()
+	}
+	b, err := NewWithOptions(Options{OnClose: func() { closedB++ }})
+	if err != nil {
+		a.Destroy()
+		return "new b: " + err.Error()
+	}
+	a.SetHtml("<p>a</p>")
+	b.SetHtml("<p>b</p>")
+	var bAlive bool
+	postMessageW(a.(*webview).window, wmClose, 0, 0)
+	time.AfterFunc(2*time.Second, func() {
+		b.Dispatch(func() {
+			bAlive = b.Window() != nil
+			b.Terminate()
+		})
+	})
+	defer time.AfterFunc(40*time.Second, b.Terminate).Stop()
+	b.Run()
+	a.Destroy()
+	b.Destroy()
+	return fmt.Sprintf("a=%d b=%d aGone=%v bAlive=%v", closedA, closedB, a.Window() == nil, bAlive)
+}
+
+func TestOnClose(t *testing.T) {
+	got, _ := resWinOnClose.Load().(string)
+	requireGUI(t, got)
+	if want := "a=1 b=0 aGone=true bAlive=true"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 

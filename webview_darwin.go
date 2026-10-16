@@ -677,6 +677,7 @@ type webview struct {
 	onScriptDialog func(ScriptDialog) (bool, string)
 	navGestures    bool
 	onNewWindow    func(string)
+	onClose        func()
 	ephemeral      bool
 	onDownload     func(string) string
 	onDownloadEnd  func(string, error)
@@ -783,6 +784,7 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		onScriptDialog:    opts.OnScriptDialog,
 		navGestures:       opts.NavigationGestures,
 		onNewWindow:       opts.OnNewWindow,
+		onClose:           opts.OnClose,
 		ephemeral:         opts.Ephemeral,
 		onDownload:        opts.OnDownload,
 		onDownloadEnd:     opts.OnDownloadDone,
@@ -1065,6 +1067,7 @@ func (w *webview) onWindowWillClose() {
 	w.window = 0
 	w.closeOnce.Do(func() { close(w.closed) })
 	dispatchMain(func() { w.onWindowDestroyed(false) })
+	callClose(w.onClose)
 }
 
 func (w *webview) onWindowDestroyed(skipTermination bool) {
