@@ -517,6 +517,9 @@ func NewWithOptions(opts Options) (WebView, error) {
 
 	err = w.embed(debug)
 	if err != nil {
+		// The window exists by now; left behind it would hold the owned-window
+		// count up, and the next person's close would never end Run.
+		w.Destroy()
 		return nil, err
 	}
 	return w, nil
