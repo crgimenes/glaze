@@ -83,6 +83,7 @@ func TestMain(m *testing.M) {
 		resDownload.Store(downloadScenario())
 		resEphemeral.Store(ephemeralScenario())
 		resPanelOnMain.Store(panelOnMainScenario())
+		resOnClose.Store(onCloseScenario())
 		// Last: this scenario runs its own [NSApp run] as the "external" host.
 		resExternalLoop.Store(externalLoopScenario())
 	}
