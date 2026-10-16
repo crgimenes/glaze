@@ -5,8 +5,8 @@ go 1.27.1
 require (
 	github.com/crgimenes/devengine v0.0.11
 	github.com/crgimenes/filo v0.0.23
-	github.com/crgimenes/glaze v0.0.54
-	github.com/crgimenes/native v0.1.11
+	github.com/crgimenes/glaze v0.0.81
+	github.com/crgimenes/native v0.1.16
 )
 
 require (
