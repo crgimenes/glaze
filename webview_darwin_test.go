@@ -873,14 +873,22 @@ func frameAutosaveScenario() string {
 	performOnMain(func() { w.window.Send(sel("setFrame:display:"), want, true) })
 	v.Destroy()
 	got := frame()
-	return fmt.Sprintf("restored=%v", got == want)
+	// A frame saved on another display: setting the autosave name makes
+	// AppKit move it to the main one, and the exact placement must win.
+	performOnMain(func() {
+		class("NSUserDefaults").Send(sel("standardUserDefaults")).Send(sel("setObject:forKey:"),
+			nsstr("140 160 700 500 -1920 0 1920 1080 "), nsstr("NSWindow Frame "+name))
+	})
+	foreign := frame()
+	return fmt.Sprintf("restored=%v, from another display=%v", got == want, foreign == want)
 }
 
 func TestFrameAutosave(t *testing.T) {
 	got, _ := resFrameAutosave.Load().(string)
 	requireGUI(t, got)
-	if got != "restored=true" {
-		t.Fatalf("frame autosave: %s", got)
+	want := "restored=true, from another display=true"
+	if got != want {
+		t.Fatalf("frame autosave: %s, want %s", got, want)
 	}
 }
 

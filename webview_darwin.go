@@ -1250,6 +1250,17 @@ func (w *webview) SetSize(width, height int, hint Hint) {
 // of them and saves nothing, or every launch would drift further.
 func (w *webview) restoreFrame() {
 	name := nsstr(w.frameName)
+	others := 0
+	id := class("NSBundle").Send(sel("mainBundle")).Send(sel("bundleIdentifier"))
+	if id != 0 {
+		running := class("NSRunningApplication").Send(sel("runningApplicationsWithBundleIdentifier:"), id)
+		others = objc.Send[int](running, sel("count")) - 1
+	}
+	if others <= 0 {
+		// Setting the autosave name restores the saved frame too, AppKit's
+		// way, so it goes before the placement below, which has the last word.
+		w.window.Send(sel("setFrameAutosaveName:"), name)
+	}
 	// setFrameUsingName: fits the saved frame to the screen the window is
 	// on, and a window not yet shown is on none, which AppKit takes as the
 	// main one: a frame saved on another display came back to the main
@@ -1258,14 +1269,7 @@ func (w *webview) restoreFrame() {
 	if !w.applySavedFrame() {
 		w.window.Send(sel("setFrameUsingName:"), name)
 	}
-	others := 0
-	id := class("NSBundle").Send(sel("mainBundle")).Send(sel("bundleIdentifier"))
-	if id != 0 {
-		running := class("NSRunningApplication").Send(sel("runningApplicationsWithBundleIdentifier:"), id)
-		others = objc.Send[int](running, sel("count")) - 1
-	}
 	if others <= 0 {
-		w.window.Send(sel("setFrameAutosaveName:"), name)
 		return
 	}
 	const step, steps = 24, 8
