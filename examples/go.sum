@@ -1,7 +1,7 @@
 github.com/crgimenes/devengine v0.0.11 h1:NxqTKo2u8wT8QR1HlZoCGJFhISU+Dk6p0ZSURP3k4to=
 github.com/crgimenes/devengine v0.0.11/go.mod h1:JEKhbiIW/D5bEWPvimMQvWUe3YfOViMIrm1yc1x0Rik=
-github.com/crgimenes/filo v0.0.23 h1:jXUD8Ysgtq9HpPyE0Xhz0WDg9+Mh9DiORMQmJfgk8o4=
-github.com/crgimenes/filo v0.0.23/go.mod h1:KmVbVAr7nleiZprZLWHXoaVW+I+NuftpUDdUmBbaIHs=
+github.com/crgimenes/filo v0.1.0 h1:+2Rvw3WIkaD9ZEilpBjiK838Z+Dk9zCrlFIFy3VJ6l0=
+github.com/crgimenes/filo v0.1.0/go.mod h1:KmVbVAr7nleiZprZLWHXoaVW+I+NuftpUDdUmBbaIHs=
 github.com/crgimenes/native v0.1.16 h1:8uAjc8qiSr1HlEE0GPPU+Ua070LLeGXXRUVSX6u32ZY=
 github.com/crgimenes/native v0.1.16/go.mod h1:Z+AGFxyW5htcS1+VnF/tAokG+o4JcPOlkcfbyAd1hes=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
