@@ -43,7 +43,8 @@ func onCloseScenario() string {
 func TestOnClose(t *testing.T) {
 	got, _ := resOnClose.Load().(string)
 	requireGUI(t, got)
-	if want := "a=1 b=0 aGone=true bAlive=true"; got != want {
+	want := "a=1 b=0 aGone=true bAlive=true"
+	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }

@@ -1373,7 +1373,8 @@ func (w *webview) Navigate(url string) {
 		autorelease(func() {
 			nsurl := class("NSURL").Send(sel("URLWithString:"), nsstr(url))
 			w.loadStarted()
-			if scope, isDir, ok := localPageScope(url); ok {
+			scope, isDir, ok := localPageScope(url)
+			if ok {
 				// loadRequest: lets a local page read anything the app can,
 				// and under the sandbox nothing at all; this keeps the page
 				// to its own directory and hands the content process the
