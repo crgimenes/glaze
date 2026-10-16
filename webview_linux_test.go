@@ -58,6 +58,7 @@ func TestMain(m *testing.M) {
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resRevealTiming.Store(revealTimingScenario())
 		resSpinner.Store(spinnerScenario())
+		resLocalPage.Store(localPageScenario())
 		resMediaCapture.Store(mediaCaptureScenario())
 		resNavigation.Store(navigationScenario())
 		resURLChange.Store(urlChangeScenario())

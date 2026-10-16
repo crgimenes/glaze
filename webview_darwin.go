@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -1367,11 +1369,37 @@ func (w *webview) Navigate(url string) {
 	performOnMain(func() {
 		autorelease(func() {
 			nsurl := class("NSURL").Send(sel("URLWithString:"), nsstr(url))
-			req := class("NSURLRequest").Send(sel("requestWithURL:"), nsurl)
 			w.loadStarted()
+			if scope, isDir, ok := localPageScope(url); ok {
+				// loadRequest: lets a local page read anything the app can,
+				// and under the sandbox nothing at all; this keeps the page
+				// to its own directory and hands the content process the
+				// extension to read it.
+				readable := class("NSURL").Send(sel("fileURLWithPath:isDirectory:"), nsstr(scope), isDir)
+				w.webView.Send(sel("loadFileURL:allowingReadAccessToURL:"), nsurl, readable)
+				return
+			}
+			req := class("NSURLRequest").Send(sel("requestWithURL:"), nsurl)
 			w.webView.Send(sel("loadRequest:"), req)
 		})
 	})
+}
+
+// localPageScope is what a file: page may read: its directory, or just the
+// file when the directory is out of reach -- a sandboxed app handed one file
+// by the system (Open With, open -a) has exactly that file.
+func localPageScope(raw string) (scope string, isDir, ok bool) {
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Scheme != "file" || u.Path == "" {
+		return "", false, false
+	}
+	dir := filepath.Dir(u.Path)
+	d, err := os.Open(dir) // #nosec G304 -- the page's own directory, only probed for access
+	if err != nil {
+		return u.Path, false, true
+	}
+	_ = d.Close()
+	return dir, true, true
 }
 
 func (w *webview) SetHtml(html string) {

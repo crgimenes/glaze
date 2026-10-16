@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resRevealTiming.Store(revealTimingScenario())
 		resSpinner.Store(spinnerScenario())
+		resLocalPage.Store(localPageScenario())
 		resHeldBackInput.Store(heldBackInputScenario())
 		resFrameAutosave.Store(frameAutosaveScenario())
 		resContextMenu.Store(contextMenuScenario())
