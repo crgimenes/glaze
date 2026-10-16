@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -98,6 +99,11 @@ window.onload = function() {
 	w.Navigate(fileURL)
 	w.Run()
 	<-done
+	// The first two reports are separate requests, and the network process
+	// sends them in the order it likes; only the third is caused by the second.
+	if len(got) >= 2 {
+		slices.Sort(got[:2])
+	}
 	return strings.Join(got, " | ")
 }
 

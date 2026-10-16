@@ -64,8 +64,9 @@ func TestHideUntilLoaded(t *testing.T) {
 // revealTimingScenario loads a page whose image does not answer until the
 // view has been shown, so the navigation cannot finish before the reveal: a
 // view shown by the finish itself, or never, reads as late. The image gives up
-// after 10 s so a view never shown still gets its finish, which also tells
-// whether the window was on screen at all.
+// after 10 s so a view never shown still gets its finish, and the page is then
+// asked whether it painted at all: where it did not, there was no first paint
+// to show it by.
 func revealTimingScenario() string {
 	revealed := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -83,16 +84,28 @@ func revealTimingScenario() string {
 
 	var w *webview
 	early, finished, visible := false, false, true
+	painted := make(chan bool, 1)
 	v, err := NewWithOptions(Options{HideUntilLoaded: true, OnNavigation: func(ev NavigationEvent) {
 		finished = true
 		visible = windowVisible(w)
-		w.Terminate()
+		if early {
+			w.Terminate()
+			return
+		}
+		w.Eval(`glazePainted(performance.getEntriesByType("paint").length > 0)`)
 	}})
 	if err != nil {
 		return "new error: " + err.Error()
 	}
 	defer v.Destroy()
 	w = v.(*webview)
+	err = w.Bind("glazePainted", func(p bool) {
+		painted <- p
+		w.Dispatch(w.Terminate)
+	})
+	if err != nil {
+		return "bind: " + err.Error()
+	}
 
 	stop := make(chan struct{})
 	defer close(stop)
@@ -119,8 +132,17 @@ func revealTimingScenario() string {
 	if !finished {
 		return fmt.Sprintf("shown=%v, navigation never finished", early)
 	}
-	if !early && !visible {
-		return "window not visible"
+	if !early {
+		select {
+		case p := <-painted:
+			if !p {
+				return "page never painted"
+			}
+		default:
+		}
+		if !visible {
+			return "window not visible"
+		}
 	}
 	return fmt.Sprintf("shown before finish=%v", early)
 }
@@ -130,11 +152,12 @@ func revealTimingScenario() string {
 func TestRevealTiming(t *testing.T) {
 	got, _ := resRevealTiming.Load().(string)
 	requireGUI(t, got)
-	if got == "window not visible" {
-		// macOS pauses an occluded window's animation frames, which the
-		// first-paint reveal waits on; a CI runner without an active display
-		// can leave the window so.
-		t.Skip("the window was not visible on screen")
+	if got == "window not visible" || got == "page never painted" {
+		// macOS pauses an occluded window's animation frames, and a display
+		// that is not refreshing (the CI runner, now and then) paints nothing:
+		// either way no first paint can show the view, and it shows at the
+		// finish, as designed.
+		t.Skip(got)
 	}
 	want := "shown before finish=true"
 	if got != want {

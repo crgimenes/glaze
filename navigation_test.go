@@ -61,10 +61,17 @@ func navigationScenario() string {
 		return &SchemeResponse{Body: []byte("<html><body>ok</body></html>"), MIMEType: "text/html"}
 	}
 	w, err = NewWithOptions(Options{
-		NoBridge:          true,
-		OnNavigation:      onNav,
-		OnNavigationStart: func(url string) { starts = append(starts, name(url)) },
-		SchemeHandlers:    map[string]SchemeHandler{"probe": page},
+		NoBridge:     true,
+		OnNavigation: onNav,
+		OnNavigationStart: func(url string) {
+			starts = append(starts, name(url))
+			// The probe supersedes the slow navigation once that one is under
+			// way; a timer could fire before a cold web process got it started.
+			if name(url) == "SLOW/" {
+				w.Dispatch(func() { w.Navigate("probe://test/ok") })
+			}
+		},
+		SchemeHandlers: map[string]SchemeHandler{"probe": page},
 	})
 	if err != nil {
 		return "new error: " + err.Error()
@@ -73,7 +80,6 @@ func navigationScenario() string {
 	var timedOut atomic.Bool
 	defer time.AfterFunc(15*time.Second, func() { timedOut.Store(true); w.Terminate() }).Stop()
 	w.Navigate(slow.URL + "/")
-	time.AfterFunc(500*time.Millisecond, func() { w.Dispatch(func() { w.Navigate("probe://test/ok") }) })
 	w.Run()
 	if timedOut.Load() {
 		got = append(got, "TIMEOUT")
