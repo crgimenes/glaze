@@ -45,8 +45,10 @@ new Image().src = 'report?' + encodeURIComponent(r);
 	}
 
 	w, err := NewWithOptions(Options{
-		NoBridge:       true,
-		SchemeHandlers: map[string]SchemeHandler{"probe": handler},
+		NoBridge: true,
+		// "app", like every scheme in the Windows test process: it registers
+		// one scheme set (see newEnvOptions).
+		SchemeHandlers: map[string]SchemeHandler{"app": handler},
 	})
 	if err != nil {
 		return "new error: " + err.Error()
@@ -64,7 +66,7 @@ new Image().src = 'report?' + encodeURIComponent(r);
 
 	w.Init("window.__probe__ = 1;")
 	defer time.AfterFunc(15*time.Second, w.Terminate).Stop()
-	w.Navigate("probe://test/index.html")
+	w.Navigate("app://test/index.html")
 	w.Run()
 
 	select {

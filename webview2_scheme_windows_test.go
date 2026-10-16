@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,9 +14,9 @@ import (
 	"github.com/ebitengine/purego"
 )
 
-// A window without schemes keeps the folder it always had; a window with
-// schemes gets one named for exactly that set, in a stable order, because
-// WebView2 refuses to share a browser process between different registrations.
+// A window without schemes keeps the folder it always had; windows with
+// schemes share one of their own, named for no scheme in particular, so an
+// app that changes its scheme set keeps its users' storage.
 func TestUserDataFolder(t *testing.T) {
 	exe, _ := os.Executable()
 	base := filepath.Base(exe)
@@ -26,9 +27,35 @@ func TestUserDataFolder(t *testing.T) {
 	}
 	schemes := sortedSchemes(map[string]SchemeHandler{"probe": nil, "app": nil})
 	got = filepath.Base(userDataFolder(schemes))
-	want := base + "-schemes-app-probe"
+	want := base + "-schemes"
 	if got != want {
 		t.Errorf("schemes %v: folder %q, want %q", schemes, got, want)
+	}
+}
+
+// One scheme set per process: the set already registered (by the GUI scenario,
+// when it ran first) comes back as the same object, and a different one is
+// refused with an error that names it.
+func TestEnvOptionsOneSetPerProcess(t *testing.T) {
+	envOptionsMu.Lock()
+	have := envOptionsObj
+	envOptionsMu.Unlock()
+	set := []string{"app"}
+	if have != nil {
+		set = have.schemes
+	}
+	first, err := newEnvOptions(set)
+	if err != nil {
+		t.Fatalf("registering %v: %v", set, err)
+	}
+	again, err := newEnvOptions(slices.Clone(set))
+	if err != nil || again != first {
+		t.Fatalf("same set again: object %#x, want %#x, err %v", again, first, err)
+	}
+	other := append(slices.Clone(set), "zzz")
+	_, err = newEnvOptions(other)
+	if err == nil || !strings.Contains(err.Error(), "zzz") {
+		t.Fatalf("different set %v: err %v, want a refusal naming it", other, err)
 	}
 }
 
@@ -64,7 +91,10 @@ func TestEnvOptionsRegistrations(t *testing.T) {
 	if ensureCOMInit() != nil {
 		t.Skip("COM not available")
 	}
-	opts := newEnvOptions([]string{"app"})
+	opts, err := newEnvOptions([]string{"app"})
+	if err != nil {
+		t.Fatalf("newEnvOptions: %v", err)
+	}
 	o := (*envOptions)(ptr(opts))
 
 	var o4 uintptr
@@ -120,8 +150,9 @@ func TestEnvOptionsRegistrations(t *testing.T) {
 		t.Errorf("AllowedOrigins = %q, want app://*", got)
 	}
 
-	if newEnvOptions([]string{"app"}) != opts {
-		t.Error("the same scheme set must reuse one options object (identical registrations)")
+	again, err := newEnvOptions([]string{"app"})
+	if err != nil || again != opts {
+		t.Errorf("the same scheme set must reuse one options object (identical registrations): got %#x, err %v", again, err)
 	}
 }
 

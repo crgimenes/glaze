@@ -251,9 +251,11 @@ marked secure; Windows a WebView2 custom scheme registration (secure, with an
 authority; needs Edge WebView2 Runtime 110 or later). So `app://home` is the
 page's origin on every platform, absolute `app://home/...` links and
 sub-resources load everywhere, and your handler sees the same URL everywhere.
-On Windows a window that registers schemes keeps its WebView2 profile in a
-folder named for them (`%APPDATA%\<exe>-schemes-app`), because WebView2
-requires windows sharing a profile to register identical schemes. See
+On Windows the windows that register schemes keep their WebView2 profile in a
+folder of their own, `%APPDATA%\<exe>-schemes`, apart from windows without
+schemes, because WebView2 requires windows sharing a profile to register
+identical schemes. That also means every window in a process registers the
+same set; a second set is refused with an error. See
 [examples/scheme](examples/scheme/).
 
 ### Untrusted content: no bridge

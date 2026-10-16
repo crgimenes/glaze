@@ -10,6 +10,7 @@
 package glaze
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -181,10 +182,11 @@ func sortedSchemes(handlers map[string]SchemeHandler) []string {
 // userDataFolder is where WebView2 keeps the profile. Every environment that
 // shares a browser process must be created with identical custom-scheme
 // registrations, or creation fails; environments share the browser process
-// when they share this folder. So a window registering schemes gets a folder
-// named for exactly those schemes, and a window without any keeps the
-// original folder unchanged. The storage this splits is per-origin anyway,
-// and an app:// origin only exists in windows that register it.
+// when they share this folder. So the windows registering schemes get a
+// folder of their own, and a window without any keeps the original folder
+// unchanged. The suffix names no scheme on purpose: a folder named for the
+// set would move, and so reset every user's storage, the day an app adds a
+// scheme. The price is one set per process, which newEnvOptions enforces.
 func userDataFolder(schemes []string) string {
 	base := os.Getenv("APPDATA")
 	if base == "" {
@@ -193,7 +195,7 @@ func userDataFolder(schemes []string) string {
 	exe, _ := os.Executable()
 	name := filepath.Base(exe)
 	if len(schemes) > 0 {
-		name += "-schemes-" + strings.Join(schemes, "-")
+		name += "-schemes"
 	}
 	return filepath.Join(base, name)
 }
@@ -265,9 +267,10 @@ type schemeRegVtbl struct {
 // both return envOptions for IUnknown, so COM identity holds. The vtbl
 // pointer must stay the first field of each.
 type envOptions struct {
-	vtbl *envOptionsVtbl
-	o4   *envOptions4
-	regs []*schemeReg
+	vtbl    *envOptionsVtbl
+	o4      *envOptions4
+	regs    []*schemeReg
+	schemes []string // sorted; the set this process is registered for
 }
 
 type envOptions4 struct {
@@ -287,17 +290,19 @@ var (
 	envOptions4VtblPtr *envOptions4Vtbl
 	schemeRegVtblPtr   *schemeRegVtbl
 
-	envOptionsMu    sync.Mutex
-	envOptionsCache = map[string]*envOptions{}
+	envOptionsMu  sync.Mutex
+	envOptionsObj *envOptions // the one registration of this process
 )
 
-// newEnvOptions returns the options object registering schemes: secure, with
-// an authority (so app://home is an origin, like http://home), and reachable
-// from any origin of the same scheme (so a same-origin POST, which always
-// carries an Origin header, is allowed; https pages are not). The object is
-// cached per scheme set: WebView2 requires identical registrations wherever a
-// browser process is shared.
-func newEnvOptions(schemes []string) uintptr {
+// newEnvOptions returns the options object registering schemes (sorted):
+// secure, with an authority (so app://home is an origin, like http://home),
+// and reachable from any origin of the same scheme (so a same-origin POST,
+// which always carries an Origin header, is allowed; https pages are not).
+// There is one object per process: every window with schemes shares the
+// profile folder (see userDataFolder), where WebView2 requires identical
+// registrations, so a different set is refused rather than left to fail
+// inside WebView2 with a message of its own.
+func newEnvOptions(schemes []string) (uintptr, error) {
 	envOptionsVtblOnce.Do(func() {
 		addRef := purego.NewCallback(staticAddRef)
 		release := purego.NewCallback(staticRelease)
@@ -334,19 +339,21 @@ func newEnvOptions(schemes []string) uintptr {
 		}
 	})
 
-	key := strings.Join(schemes, "\x00")
 	envOptionsMu.Lock()
 	defer envOptionsMu.Unlock()
-	o := envOptionsCache[key]
+	o := envOptionsObj
+	if o != nil && !slices.Equal(o.schemes, schemes) {
+		return 0, fmt.Errorf("webview2: this process registered the custom schemes %v already; every window in it must register that same set, not %v", o.schemes, schemes)
+	}
 	if o == nil {
-		o = &envOptions{vtbl: envOptionsVtblPtr}
+		o = &envOptions{vtbl: envOptionsVtblPtr, schemes: slices.Clone(schemes)}
 		o.o4 = &envOptions4{vtbl: envOptions4VtblPtr, base: o}
 		for _, s := range schemes {
 			o.regs = append(o.regs, &schemeReg{vtbl: schemeRegVtblPtr, scheme: s})
 		}
-		envOptionsCache[key] = o
+		envOptionsObj = o
 	}
-	return uintptr(unsafe.Pointer(o)) // #nosec G103 -- process-lifetime COM object (envOptionsCache)
+	return uintptr(unsafe.Pointer(o)), nil // #nosec G103 -- process-lifetime COM object (envOptionsObj)
 }
 
 // setOut writes a pointer-sized value through a COM out-parameter.

@@ -713,7 +713,10 @@ func createEnvironment(userDataDir string, schemes []string, envHandler *comHand
 		if !versionBuildAtLeast(version, minSchemeAPIVersion) {
 			return fmt.Errorf("webview2: custom URL schemes need Edge WebView2 Runtime %s or later, found %s (update it)", targetBrowserVersion, version)
 		}
-		options = newEnvOptions(schemes)
+		options, err = newEnvOptions(schemes)
+		if err != nil {
+			return err
+		}
 	}
 	mod, err := syscall.LoadLibrary(dll)
 	if err != nil {
