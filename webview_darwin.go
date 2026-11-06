@@ -1234,8 +1234,11 @@ func (w *webview) SetSize(width, height int, hint Hint) {
 				// setContentSize keeps the top-left corner fixed, avoiding a
 				// struct-return read of the current frame.
 				w.window.Send(sel("setContentSize:"), size)
+				// Only a size moves the window: centering after a min or
+				// max bound threw a restored frame back onto the main
+				// display.
+				w.window.Send(sel("center"))
 			}
-			w.window.Send(sel("center"))
 			if !w.isSizeSet && w.frameName != "" {
 				w.restoreFrame()
 			}

@@ -845,7 +845,8 @@ var resFrameAutosave atomic.Value // string
 
 // frameAutosaveScenario moves a window to a known frame and closes it; a
 // second window with the same FrameAutosaveName must open there, its SetSize
-// notwithstanding. The saved key is removed afterwards.
+// calls (the size, then a minimum) notwithstanding. The saved key is removed
+// afterwards.
 func frameAutosaveScenario() string {
 	name := fmt.Sprintf("glaze-test-%d", time.Now().UnixNano())
 	defer performOnMain(func() {
@@ -860,6 +861,7 @@ func frameAutosaveScenario() string {
 		defer v.Destroy()
 		w := v.(*webview)
 		w.SetSize(400, 300, HintNone)
+		w.SetSize(300, 200, HintMin)
 		var f cgRect
 		performOnMain(func() { f = objc.Send[cgRect](w.window, sel("frame")) })
 		return f
