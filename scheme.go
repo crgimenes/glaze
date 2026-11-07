@@ -1,6 +1,9 @@
 package glaze
 
-import "unsafe"
+import (
+	"errors"
+	"unsafe"
+)
 
 // This file adds a custom-URL-scheme handler API to glaze so a host app can serve
 // its assets from a portless, custom origin (e.g. "app://") that WebKit/WebView2
@@ -195,6 +198,70 @@ type Options struct {
 	// leaves nothing behind. Each ephemeral web view gets its own store.
 	// macOS and Linux; ignored on Windows.
 	Ephemeral bool
+
+	// Hidden makes a headless web view: it keeps its native window and event
+	// loop, but the window is never shown -- not at creation, while loading,
+	// on SetSize, or in Run -- and the app is not activated for it. Focus and
+	// Raise do nothing. SetSize still sizes the page's viewport (on Linux,
+	// only with DisableThrottling; see below). Content loads and runs
+	// normally, so HideUntilLoaded is ignored. It cannot be combined with
+	// Window: an existing window's visibility belongs to its owner. On macOS a
+	// process whose only web views are hidden runs without a Dock icon.
+	// WebKit throttles a page whose window is not on screen, on macOS and
+	// Linux alike; see DisableThrottling. On Windows a hidden page is not
+	// throttled: it reports itself visible and runs at full speed, animation
+	// frames included, with or without DisableThrottling. Linux still needs a
+	// display session (X11 or Wayland; Xvfb or a headless compositor such as
+	// weston --backend=headless will do), and without DisableThrottling a
+	// hidden page there sees a 0x0 viewport, since its window is never mapped.
+	Hidden bool
+
+	// DisableThrottling keeps the page running at full speed while the
+	// window is inactive, covered or hidden. For pages doing continuous work
+	// in the background; it costs battery.
+	//
+	// On macOS it opts the process out of App Nap (for the rest of its life,
+	// once any web view asks) and turns off WebKit's occlusion detection,
+	// hidden-page timer throttling and hidden-page process suppression. The
+	// WebKit settings are private API, each applied only if this macOS has
+	// it. With Hidden, the window is put on screen fully transparent and
+	// click-through instead of left off it.
+	//
+	// On Linux it is complete only with Hidden. It turns off WebKitGTK's
+	// hidden-page timer throttling and CSS animation suspension (WebKitGTK
+	// 2.42 or later), which alone keeps timers at full speed but not
+	// requestAnimationFrame. With Hidden, the window is also mapped without
+	// appearing on screen, so the page is visible to WebKit: an offscreen
+	// window on GTK3, which the first such web view in a process therefore
+	// prefers when both stacks are installed, and otherwise (GTK4, or
+	// WebKitGTK 2.48.0 to 2.48.3, which crash in an offscreen window) a fully
+	// transparent, undecorated, click-through window that is never presented
+	// or focused. On GTK4 that window can still take focus and appear in the
+	// task switcher on some desktops; under Xvfb or a headless compositor
+	// neither matters. Without Hidden it is best effort: a minimized or
+	// covered window keeps its timers, but not animation frames.
+	//
+	// On Windows only a minimized window is throttled, because its web view is
+	// sized to nothing. With DisableThrottling the web view keeps its last
+	// size instead, so the page keeps running at full speed and reports
+	// itself visible. A Hidden web view is never throttled.
+	DisableThrottling bool
+}
+
+// ErrHiddenWindow is returned by NewWithOptions when Options.Hidden is
+// combined with Options.Window.
+var ErrHiddenWindow = errors.New("webview: Options.Hidden cannot be combined with Options.Window")
+
+// checkHidden validates Options.Hidden and clears what it overrides.
+func checkHidden(opts *Options) error {
+	if !opts.Hidden {
+		return nil
+	}
+	if opts.Window != nil {
+		return ErrHiddenWindow
+	}
+	opts.HideUntilLoaded = false
+	return nil
 }
 
 // schemeMIME returns a response's MIME type or the octet-stream default.

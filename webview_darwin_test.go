@@ -61,6 +61,7 @@ func TestMain(m *testing.M) {
 		resRaise.Store(raiseScenario())
 		resEditor.Store(editorScenario())
 		resNoBridge.Store(noBridgeScenario())
+		resHidden.Store(hiddenScenario())
 		resHideUntilLoaded.Store(hideUntilLoadedScenario())
 		resRevealTiming.Store(revealTimingScenario())
 		resSpinner.Store(spinnerScenario())
@@ -897,4 +898,9 @@ func TestFrameAutosave(t *testing.T) {
 func navGesturesOn(w *webview) (on bool) {
 	performOnMain(func() { on = objc.Send[bool](w.webView, sel("allowsBackForwardNavigationGestures")) })
 	return on
+}
+
+// windowShown reports whether the window is ordered in (shown at all).
+func windowShown(w WebView) bool {
+	return objc.Send[bool](w.(*webview).window, sel("isVisible"))
 }
