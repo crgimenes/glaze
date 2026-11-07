@@ -26,6 +26,7 @@ type (
 	SchemeResponse    = core.SchemeResponse
 	ScriptDialog      = core.ScriptDialog
 	ScriptDialogKind  = core.ScriptDialogKind
+	Snapshotter       = core.Snapshotter
 	WebView           = core.WebView
 )
 
