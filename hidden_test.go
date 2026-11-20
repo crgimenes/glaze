@@ -5,6 +5,7 @@ package glaze
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -70,6 +71,12 @@ func TestHidden(t *testing.T) {
 	got, _ := resHidden.Load().(string)
 	requireGUI(t, got)
 	want := "visible=false viewport=640x480"
+	if runtime.GOOS == "linux" {
+		// A hidden window is never mapped, so the page sees no viewport
+		// (documented on Options.Hidden); TestUnthrottledHidden covers the
+		// sized case.
+		want = "visible=false viewport=0x0"
+	}
 	if got != want {
 		t.Fatalf("Hidden web view: %q, want %q", got, want)
 	}
