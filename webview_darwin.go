@@ -33,7 +33,14 @@ const (
 
 	nsBackingStoreBuffered = 2
 
-	nsApplicationActivationPolicyRegular = 0
+	nsWindowCollectionBehaviorTransient    = 1 << 3
+	nsWindowCollectionBehaviorIgnoresCycle = 1 << 6
+
+	nsApplicationActivationPolicyRegular   = 0
+	nsApplicationActivationPolicyAccessory = 1
+
+	// NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical
+	nsActivityUnthrottled = (0x00FFFFFF &^ (1 << 20)) | 0xFF00000000
 
 	nsEventTypeKeyDown            = 10
 	nsEventTypeApplicationDefined = 15
@@ -610,6 +617,14 @@ var (
 	// existed), it stays false: closing the last glaze window must not stop a
 	// loop we do not own, and Terminate must not stop it either.
 	glazeRunsLoop atomic.Bool
+
+	// hiddenPolicy is true while glaze runs the app as Accessory because its
+	// first web view was hidden; the first visible window makes it Regular.
+	// Main thread only.
+	hiddenPolicy bool
+	// unthrottledActivity opts the process out of App Nap once a web view
+	// with DisableThrottling exists; the activity is never ended.
+	unthrottledActivity sync.Once
 )
 
 func getAndSetIsFirstInstance() bool {
@@ -653,6 +668,10 @@ type webview struct {
 	// only bringing the window forward. See Options.AcceptsFirstMouse.
 	firstMouse bool
 	noBridge   bool
+	// hidden: see Options.Hidden.
+	hidden bool
+	// noThrottling: see Options.DisableThrottling.
+	noThrottling bool
 	// contentHidden is true while HideUntilLoaded holds the web view back.
 	contentHidden bool
 	// spinner shows in its place when the wait passes spinnerDelay; owned by
@@ -742,6 +761,9 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 // the returned WebView marshals itself the same way, so the webview can be
 // driven from that goroutine.
 func NewWithOptions(opts Options) (WebView, error) {
+	if err := checkHidden(&opts); err != nil {
+		return nil, err
+	}
 	err := ensureInit()
 	if err != nil {
 		return nil, err
@@ -774,6 +796,8 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 		debug:             opts.Debug,
 		firstMouse:        opts.AcceptsFirstMouse,
 		noBridge:          opts.NoBridge,
+		hidden:            opts.Hidden,
+		noThrottling:      opts.DisableThrottling,
 		contentHidden:     opts.HideUntilLoaded,
 		onNavigation:      opts.OnNavigation,
 		onNavigationStart: opts.OnNavigationStart,
@@ -796,7 +820,13 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 	w.app = app
 	w.windowInit(objc.ID(uintptr(opts.Window)))
 	w.windowSettings(opts.Debug)
-	if loopRunning && w.ownsWindow {
+	if hiddenPolicy && w.ownsWindow && !w.hidden {
+		// The first web view was hidden and made the app an Accessory; a
+		// visible window needs the Dock icon and activation of a normal app.
+		hiddenPolicy = false
+		app.Send(sel("setActivationPolicy:"), nsApplicationActivationPolicyRegular)
+		w.Raise()
+	} else if loopRunning && w.ownsWindow {
 		// The loop's owner picked the activation policy (a tray app runs as
 		// Accessory, no Dock icon — leave that alone); activate so the new
 		// window actually fronts instead of opening behind the current app.
@@ -901,7 +931,13 @@ func (w *webview) endURLWait() {
 // temporary run loop. It is also the path taken when the app had finished
 // launching before the first web view, where there is no temporary loop.
 func (w *webview) finishLaunching(app objc.ID) {
-	if !isAppBundled() {
+	switch {
+	case isAppBundled():
+	case w.hidden:
+		// No Dock icon and no activation: nothing is shown.
+		app.Send(sel("setActivationPolicy:"), nsApplicationActivationPolicyAccessory)
+		hiddenPolicy = true
+	default:
 		app.Send(sel("setActivationPolicy:"), nsApplicationActivationPolicyRegular)
 		app.Send(sel("activateIgnoringOtherApps:"), true)
 	}
@@ -944,6 +980,9 @@ func (w *webview) windowSettings(debug bool) {
 		// macOS lets window.open run without a user gesture by default; popups
 		// must come from a click, as they do on WebKitGTK.
 		prefs.Send(sel("setJavaScriptCanOpenWindowsAutomatically:"), false)
+		if w.noThrottling {
+			disableThrottling(prefs)
+		}
 
 		// Register custom scheme handlers on the configuration BEFORE the
 		// WKWebView is created — WKWebView copies its configuration at init, so
@@ -970,6 +1009,9 @@ func (w *webview) windowSettings(debug bool) {
 		w.webView = wv
 		if w.navGestures {
 			w.webView.Send(sel("setAllowsBackForwardNavigationGestures:"), true)
+		}
+		if w.noThrottling && responds(w.webView, "_setWindowOcclusionDetectionEnabled:") {
+			w.webView.Send(sel("_setWindowOcclusionDetectionEnabled:"), false)
 		}
 		w.webView.Send(sel("setAutoresizingMask:"), uint(nsViewWidthSizable|nsViewHeightSizable))
 		if debug {
@@ -1021,7 +1063,7 @@ func (w *webview) windowSettings(debug bool) {
 		}
 
 		w.window.Send(sel("setContentView:"), w.widget)
-		if w.ownsWindow {
+		if w.ownsWindow && !w.hidden {
 			w.window.Send(sel("makeKeyAndOrderFront:"), objc.ID(0))
 			// The content view is a plain NSView container, and a plain NSView
 			// REFUSES first-responder status — so when the window becomes key,
@@ -1035,8 +1077,52 @@ func (w *webview) windowSettings(debug bool) {
 				first = w.paintCover
 			}
 			w.window.Send(sel("makeFirstResponder:"), first)
+		} else if w.ownsWindow && w.noThrottling {
+			w.orderInTransparent()
 		}
 	})
+}
+
+// orderInTransparent puts a hidden window on screen fully transparent and
+// click-through, without making it key or activating the app. WebKit counts
+// a page whose window is not on screen as hidden, which DisableThrottling
+// cannot override; an ordered-in window with occlusion detection off is not.
+func (w *webview) orderInTransparent() {
+	w.window.Send(sel("setAlphaValue:"), float64(0))
+	w.window.Send(sel("setOpaque:"), false)
+	w.window.Send(sel("setHasShadow:"), false)
+	w.window.Send(sel("setIgnoresMouseEvents:"), true)
+	w.window.Send(sel("setExcludedFromWindowsMenu:"), true)
+	w.window.Send(sel("setCollectionBehavior:"),
+		uint(nsWindowCollectionBehaviorTransient|nsWindowCollectionBehaviorIgnoresCycle))
+	w.window.Send(sel("orderFrontRegardless"))
+}
+
+// disableThrottling keeps App Nap and WebKit from slowing the page when the
+// window is inactive or covered: App Nap throttles the process, and WebKit
+// treats an occluded page as hidden, throttling its timers and suppressing
+// its WebContent process. The preferences are WebKit SPI, so each is checked
+// first.
+func disableThrottling(prefs objc.ID) {
+	for _, setter := range []string{
+		"_setPageVisibilityBasedProcessSuppressionEnabled:",
+		"_setHiddenPageDOMTimerThrottlingEnabled:",
+		"_setHiddenPageDOMTimerThrottlingAutoIncreases:",
+	} {
+		if responds(prefs, setter) {
+			prefs.Send(sel(setter), false)
+		}
+	}
+	unthrottledActivity.Do(func() {
+		info := class("NSProcessInfo").Send(sel("processInfo"))
+		activity := info.Send(sel("beginActivityWithOptions:reason:"),
+			uint64(nsActivityUnthrottled), nsstr("web view with throttling disabled"))
+		activity.Send(sel("retain"))
+	})
+}
+
+func responds(id objc.ID, selector string) bool {
+	return objc.Send[bool](id, sel("respondsToSelector:"), sel(selector))
 }
 
 func (w *webview) stopRunLoop() {
@@ -1188,7 +1274,7 @@ func (w *webview) SetTitle(title string) {
 }
 
 func (w *webview) Focus() {
-	if w.window == 0 || w.webView == 0 {
+	if w.hidden || w.window == 0 || w.webView == 0 {
 		return
 	}
 	// Largely redundant: an NSWindow makes its content view the first responder
@@ -1200,7 +1286,7 @@ func (w *webview) Focus() {
 }
 
 func (w *webview) Raise() {
-	if w.window == 0 {
+	if w.hidden || w.window == 0 {
 		return
 	}
 	performOnMain(func() {

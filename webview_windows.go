@@ -41,6 +41,7 @@ const (
 
 	gwlpUserData = -21
 	gwlStyle     = -16
+	gwlExStyle   = -20
 
 	wmDestroy       = 0x0002
 	wmSize          = 0x0005
@@ -73,6 +74,8 @@ var (
 	showWindow         func(hwnd uintptr, cmd int32) int32
 	setForegroundWin   func(hwnd uintptr) int32
 	updateWindow       func(hwnd uintptr) int32
+	adjustWindowRectEx func(r *rect, style uint32, menu int32, exStyle uint32) int32
+	getMenu            func(hwnd uintptr) uintptr
 	destroyWindow      func(hwnd uintptr) int32
 	setWindowLongPtrW  func(hwnd uintptr, index int32, val uintptr) uintptr
 	getWindowLongPtrW  func(hwnd uintptr, index int32) uintptr
@@ -186,6 +189,8 @@ func ensureWinInit() error {
 		reg(&showWindow, user32, "ShowWindow")
 		reg(&setForegroundWin, user32, "SetForegroundWindow")
 		reg(&updateWindow, user32, "UpdateWindow")
+		reg(&adjustWindowRectEx, user32, "AdjustWindowRectEx")
+		reg(&getMenu, user32, "GetMenu")
 		reg(&destroyWindow, user32, "DestroyWindow")
 		reg(&setWindowLongPtrW, user32, "SetWindowLongPtrW")
 		reg(&getWindowLongPtrW, user32, "GetWindowLongPtrW")
@@ -286,7 +291,7 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 		// click); forward it into the WebView2 content so the keyboard and a screen
 		// reader's cursor land in the page, matching the macOS/Linux backends. A
 		// no-op until the controller exists (embed does the initial focus instead).
-		if w.controller != 0 {
+		if w.controller != 0 && !w.hidden {
 			asController(w.controller).MoveFocus(moveFocusReasonProgrammatic)
 		}
 		return 0
@@ -365,7 +370,7 @@ func subclassProc(hwnd uintptr, msg uint32, wp, lp, _, refData uintptr) uintptr 
 	case wmSetFocus:
 		// Forward keyboard focus into the WebView2 content, as the owned-window
 		// path does; the host still sees the message afterward.
-		if w.controller != 0 {
+		if w.controller != 0 && !w.hidden {
 			asController(w.controller).MoveFocus(moveFocusReasonProgrammatic)
 		}
 	case wmGetMinMaxInfo:
@@ -419,7 +424,11 @@ type webview struct {
 	schemeHandlers map[string]SchemeHandler
 
 	noBridge bool
-	onClose  func()
+	// hidden: see Options.Hidden.
+	hidden bool
+	// noThrottling: see Options.DisableThrottling.
+	noThrottling bool
+	onClose      func()
 
 	// Window size constraints from SetSize(HintMin/HintMax); enforced in
 	// wndProc's WM_GETMINMAXINFO handler.
@@ -462,6 +471,9 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 // SchemeHandlers (registered with WebView2 as secure custom schemes; see
 // webview2_scheme_windows.go).
 func NewWithOptions(opts Options) (WebView, error) {
+	if err := checkHidden(&opts); err != nil {
+		return nil, err
+	}
 	err := ensureWinInit()
 	if err != nil {
 		return nil, err
@@ -477,6 +489,8 @@ func NewWithOptions(opts Options) (WebView, error) {
 		dispatchMap:    map[uintptr]func(){},
 		schemeHandlers: opts.SchemeHandlers,
 		noBridge:       opts.NoBridge,
+		hidden:         opts.Hidden,
+		noThrottling:   opts.DisableThrottling,
 		onClose:        opts.OnClose,
 	}
 	window := opts.Window
@@ -579,9 +593,16 @@ func (w *webview) SetSize(width, height int, hint Hint) {
 		style |= uintptr(wsThickFrame | wsMaximizeBox)
 	}
 	setWindowLongPtrW(w.window, gwlStyle, style)
-	setWindowPos(w.window, 0, 0, 0, int32(width), int32(height),
+	// The size is the client area (the page's viewport), as on macOS and Linux:
+	// grow it by the frame, title bar and menu bar.
+	r := rect{0, 0, int32(width), int32(height)}
+	exStyle := getWindowLongPtrW(w.window, gwlExStyle)
+	if adjustWindowRectEx(&r, uint32(style), boolToInt32(getMenu(w.window) != 0), uint32(exStyle)) == 0 { // #nosec G115 -- window styles are 32-bit
+		r = rect{0, 0, int32(width), int32(height)}
+	}
+	setWindowPos(w.window, 0, 0, 0, r.Right-r.Left, r.Bottom-r.Top,
 		swpNoZOrder|swpNoActivate|swpNoMove)
-	if w.ownsWindow {
+	if w.ownsWindow && !w.hidden {
 		showWindow(w.window, swShow)
 		updateWindow(w.window)
 	}
