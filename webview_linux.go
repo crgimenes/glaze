@@ -904,10 +904,11 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 // NewWithOptions creates a web view configured by opts, including any custom
 // SchemeHandlers (registered on the web view's context and marked as secure).
 func NewWithOptions(opts Options) (WebView, error) {
-	if err := checkHidden(&opts); err != nil {
+	err := checkHidden(&opts)
+	if err != nil {
 		return nil, err
 	}
-	err := ensureInitPreferring(opts.Hidden && opts.DisableThrottling)
+	err = ensureInitPreferring(opts.Hidden && opts.DisableThrottling)
 	if err != nil {
 		return nil, err
 	}
@@ -1239,9 +1240,10 @@ func (w *webview) windowShow() {
 		return
 	}
 	w.attachContent()
-	if w.unthrottledHidden() {
+	switch {
+	case w.unthrottledHidden():
 		showUnthrottledHiddenWindow(w.window)
-	} else if w.ownsWindow && !w.hidden {
+	case w.ownsWindow && !w.hidden:
 		gtkWidgetGrabFocus(w.webview)
 		if gtk4 {
 			gtkWidgetSetVisible(w.window, true)

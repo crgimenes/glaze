@@ -471,10 +471,11 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 // SchemeHandlers (registered with WebView2 as secure custom schemes; see
 // webview2_scheme_windows.go).
 func NewWithOptions(opts Options) (WebView, error) {
-	if err := checkHidden(&opts); err != nil {
+	err := checkHidden(&opts)
+	if err != nil {
 		return nil, err
 	}
-	err := ensureWinInit()
+	err = ensureWinInit()
 	if err != nil {
 		return nil, err
 	}

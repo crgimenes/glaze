@@ -91,7 +91,8 @@ func winThrottleScenario(opts Options, minimize bool) string {
 // checkWinThrottle returns what about a report is not as expected, or "".
 func checkWinThrottle(got string, wantThrottled bool) string {
 	var r winThrottleReport
-	if err := json.Unmarshal([]byte(got), &r); err != nil {
+	err := json.Unmarshal([]byte(got), &r)
+	if err != nil {
 		return got
 	}
 	var bad []string
@@ -125,7 +126,8 @@ func checkWinThrottle(got string, wantThrottled bool) string {
 func TestHiddenNotThrottled(t *testing.T) {
 	got, _ := resWinHiddenThrottle.Load().(string)
 	requireGUI(t, got)
-	if bad := checkWinThrottle(got, false); bad != "" {
+	bad := checkWinThrottle(got, false)
+	if bad != "" {
 		t.Fatalf("Hidden web view: %s (%s)", bad, got)
 	}
 }
@@ -135,7 +137,8 @@ func TestHiddenNotThrottled(t *testing.T) {
 func TestMinimizedThrottled(t *testing.T) {
 	got, _ := resWinMinimized.Load().(string)
 	requireGUI(t, got)
-	if bad := checkWinThrottle(got, true); bad != "" {
+	bad := checkWinThrottle(got, true)
+	if bad != "" {
 		t.Fatalf("minimized web view: %s (%s)", bad, got)
 	}
 }
@@ -143,7 +146,8 @@ func TestMinimizedThrottled(t *testing.T) {
 func TestMinimizedDisableThrottling(t *testing.T) {
 	got, _ := resWinMinimizedNoThrott.Load().(string)
 	requireGUI(t, got)
-	if bad := checkWinThrottle(got, false); bad != "" {
+	bad := checkWinThrottle(got, false)
+	if bad != "" {
 		t.Fatalf("minimized web view with DisableThrottling: %s (%s)", bad, got)
 	}
 }
