@@ -221,11 +221,16 @@ type Options struct {
 	// in the background; it costs battery.
 	//
 	// On macOS it opts the process out of App Nap (for the rest of its life,
-	// once any web view asks) and turns off WebKit's occlusion detection,
-	// hidden-page timer throttling and hidden-page process suppression. The
-	// WebKit settings are private API, each applied only if this macOS has
-	// it. With Hidden, the window is put on screen fully transparent and
-	// click-through instead of left off it.
+	// once any web view asks), sets WebKit's inactive scheduling policy to
+	// None (public API, macOS 14 or later), and turns off WebKit's occlusion
+	// detection, hidden-page timer throttling and hidden-page process
+	// suppression. Those last settings are private API, each applied only if
+	// this macOS has it; App Review rejects binaries carrying private
+	// selectors, so Mac App Store submissions build with -tags
+	// glaze_appstore, which drops them and their selector strings from the
+	// binary -- the page then runs at full speed unless its window is
+	// occluded. With Hidden, the window is put on screen fully transparent
+	// and click-through instead of left off it.
 	//
 	// On Linux it is complete only with Hidden. It turns off WebKitGTK's
 	// hidden-page timer throttling and CSS animation suspension (WebKitGTK

@@ -39,6 +39,10 @@ const (
 	nsApplicationActivationPolicyRegular   = 0
 	nsApplicationActivationPolicyAccessory = 1
 
+	// WKInactiveSchedulingPolicyNone: no throttling or suspension of an idle
+	// web view. Public API, macOS 14+.
+	wkInactiveSchedulingPolicyNone = 2
+
 	// NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical
 	nsActivityUnthrottled = (0x00FFFFFF &^ (1 << 20)) | 0xFF00000000
 
@@ -761,10 +765,11 @@ func NewWindow(debug bool, window unsafe.Pointer) (WebView, error) {
 // the returned WebView marshals itself the same way, so the webview can be
 // driven from that goroutine.
 func NewWithOptions(opts Options) (WebView, error) {
-	if err := checkHidden(&opts); err != nil {
+	err := checkHidden(&opts)
+	if err != nil {
 		return nil, err
 	}
-	err := ensureInit()
+	err = ensureInit()
 	if err != nil {
 		return nil, err
 	}
@@ -820,13 +825,14 @@ func newWebView(opts Options, app objc.ID, loopRunning bool) *webview {
 	w.app = app
 	w.windowInit(objc.ID(uintptr(opts.Window)))
 	w.windowSettings(opts.Debug)
-	if hiddenPolicy && w.ownsWindow && !w.hidden {
+	switch {
+	case hiddenPolicy && w.ownsWindow && !w.hidden:
 		// The first web view was hidden and made the app an Accessory; a
 		// visible window needs the Dock icon and activation of a normal app.
 		hiddenPolicy = false
 		app.Send(sel("setActivationPolicy:"), nsApplicationActivationPolicyRegular)
 		w.Raise()
-	} else if loopRunning && w.ownsWindow {
+	case loopRunning && w.ownsWindow:
 		// The loop's owner picked the activation policy (a tray app runs as
 		// Accessory, no Dock icon — leave that alone); activate so the new
 		// window actually fronts instead of opening behind the current app.
@@ -1010,8 +1016,8 @@ func (w *webview) windowSettings(debug bool) {
 		if w.navGestures {
 			w.webView.Send(sel("setAllowsBackForwardNavigationGestures:"), true)
 		}
-		if w.noThrottling && responds(w.webView, "_setWindowOcclusionDetectionEnabled:") {
-			w.webView.Send(sel("_setWindowOcclusionDetectionEnabled:"), false)
+		if w.noThrottling {
+			disableOcclusionDetection(w.webView)
 		}
 		w.webView.Send(sel("setAutoresizingMask:"), uint(nsViewWidthSizable|nsViewHeightSizable))
 		if debug {
@@ -1063,7 +1069,8 @@ func (w *webview) windowSettings(debug bool) {
 		}
 
 		w.window.Send(sel("setContentView:"), w.widget)
-		if w.ownsWindow && !w.hidden {
+		switch {
+		case w.ownsWindow && !w.hidden:
 			w.window.Send(sel("makeKeyAndOrderFront:"), objc.ID(0))
 			// The content view is a plain NSView container, and a plain NSView
 			// REFUSES first-responder status — so when the window becomes key,
@@ -1077,7 +1084,7 @@ func (w *webview) windowSettings(debug bool) {
 				first = w.paintCover
 			}
 			w.window.Send(sel("makeFirstResponder:"), first)
-		} else if w.ownsWindow && w.noThrottling {
+		case w.ownsWindow && w.noThrottling:
 			w.orderInTransparent()
 		}
 	})
@@ -1101,18 +1108,14 @@ func (w *webview) orderInTransparent() {
 // disableThrottling keeps App Nap and WebKit from slowing the page when the
 // window is inactive or covered: App Nap throttles the process, and WebKit
 // treats an occluded page as hidden, throttling its timers and suppressing
-// its WebContent process. The preferences are WebKit SPI, so each is checked
-// first.
+// its WebContent process. The scheduling policy and App Nap opt-out are
+// public API; the rest is SPI in throttle_darwin.go, absent from
+// glaze_appstore builds.
 func disableThrottling(prefs objc.ID) {
-	for _, setter := range []string{
-		"_setPageVisibilityBasedProcessSuppressionEnabled:",
-		"_setHiddenPageDOMTimerThrottlingEnabled:",
-		"_setHiddenPageDOMTimerThrottlingAutoIncreases:",
-	} {
-		if responds(prefs, setter) {
-			prefs.Send(sel(setter), false)
-		}
+	if responds(prefs, "setInactiveSchedulingPolicy:") {
+		prefs.Send(sel("setInactiveSchedulingPolicy:"), wkInactiveSchedulingPolicyNone)
 	}
+	disableThrottlingSPI(prefs)
 	unthrottledActivity.Do(func() {
 		info := class("NSProcessInfo").Send(sel("processInfo"))
 		activity := info.Send(sel("beginActivityWithOptions:reason:"),
