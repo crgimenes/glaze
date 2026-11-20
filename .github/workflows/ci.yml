@@ -91,7 +91,7 @@ jobs:
         run: |
           # Compile the tests first so the watchdog below times only the run, not
           # the (slower) Windows build.
-          go test -c -o glaze_test.exe .
+          go test -c -o glaze_test.exe ./core
           # go test's own -timeout prints a goroutine dump, but a process wedged in
           # a modal COM / Win32 call (WebView2, a file dialog) can fail to actually
           # exit. Run it under an external hard watchdog (WaitForExit +

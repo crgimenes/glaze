@@ -1,0 +1,178 @@
+package core
+
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+func TestAppWindowNilHandler(t *testing.T) {
+	err := AppWindow(AppOptions{})
+	if err == nil {
+		t.Fatal("expected error for nil handler")
+	}
+}
+
+func TestAppOptionsDefaults(t *testing.T) {
+	// We can't test the full AppWindow flow without a native library,
+	// but we can verify that the defaults are applied by checking the
+	// validation path. Since Handler is required, this tests nil guard.
+	err := AppWindow(AppOptions{
+		Title:   "",
+		Width:   0,
+		Height:  0,
+		Handler: nil,
+	})
+	if err == nil {
+		t.Fatal("expected error for nil handler")
+	}
+}
+
+func TestAppWindowInvalidAddr(t *testing.T) {
+	// Use an invalid address to trigger a listen error.
+	err := AppWindow(AppOptions{
+		Transport: AppTransportTCP,
+		Handler:   http.NewServeMux(),
+		Addr:      "invalid-not-an-address:99999999",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid address")
+	}
+}
+
+func TestSetupTCPTransportRejectsNonLoopback(t *testing.T) {
+	tests := []struct {
+		name     string
+		addr     string
+		wantErr  bool
+		wantHost string // expected baseURL host (with brackets for IPv6)
+	}{
+		{name: "loopback v4", addr: "127.0.0.1:0", wantErr: false, wantHost: "127.0.0.1"},
+		{name: "loopback v6", addr: "[::1]:0", wantErr: false, wantHost: "[::1]"},
+		{name: "wildcard v4", addr: "0.0.0.0:8080", wantErr: true},
+		{name: "wildcard v6", addr: "[::]:8080", wantErr: true},
+		{name: "external ip", addr: "192.168.1.1:8080", wantErr: true},
+		{name: "all interfaces", addr: ":8080", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := setupTCPTransport(tt.addr)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error for non-loopback address")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			defer func() { _ = result.listener.Close() }()
+			// The baseURL must point at the address actually bound, so the WebView
+			// reaches the same listener (regression: it was hardcoded to 127.0.0.1
+			// even for an "[::1]:0" listener).
+			wantPrefix := "http://" + tt.wantHost + ":"
+			if !strings.HasPrefix(result.baseURL, wantPrefix) {
+				t.Fatalf("baseURL = %q, want prefix %q", result.baseURL, wantPrefix)
+			}
+		})
+	}
+}
+
+func TestResolveAppTransport(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested AppTransport
+		goos      string
+		want      AppTransport
+		wantErr   bool
+	}{
+		{name: "auto darwin", requested: AppTransportAuto, goos: "darwin", want: AppTransportUnix},
+		{name: "auto linux", requested: "", goos: "linux", want: AppTransportUnix},
+		{name: "auto windows", requested: AppTransportAuto, goos: "windows", want: AppTransportTCP},
+		{name: "explicit tcp", requested: AppTransportTCP, goos: "darwin", want: AppTransportTCP},
+		{name: "explicit unix", requested: AppTransportUnix, goos: "linux", want: AppTransportUnix},
+		{name: "unix windows error", requested: AppTransportUnix, goos: "windows", wantErr: true},
+		{name: "invalid transport", requested: "bogus", goos: "linux", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveAppTransport(tt.requested, tt.goos)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveAppTransport() unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveAppTransport() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPrepareUnixSocketPath(t *testing.T) {
+	path, ownedDir, err := prepareUnixSocketPath("")
+	if err != nil {
+		t.Fatalf("prepareUnixSocketPath() unexpected error: %v", err)
+	}
+	if path == "" {
+		t.Fatal("prepareUnixSocketPath() returned empty path")
+	}
+	if ownedDir == "" {
+		t.Fatal("prepareUnixSocketPath() default path should come with its owned dir")
+	}
+	defer func() { _ = os.Remove(ownedDir) }()
+	_, statErr := os.Stat(path)
+	if !os.IsNotExist(statErr) {
+		t.Fatalf("expected socket path placeholder to not exist, stat err: %v", statErr)
+	}
+	// The dir holding the default socket must be private: it is what stands
+	// between the socket and other local users.
+	info, err := os.Stat(ownedDir)
+	if err != nil {
+		t.Fatalf("stat owned dir: %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("owned dir mode = %o, want 0700", info.Mode().Perm())
+	}
+}
+
+func TestPrepareUnixSocketPathCustomPathOwnsNoDir(t *testing.T) {
+	dir := t.TempDir()
+	want := filepath.Join(dir, "custom.sock")
+	path, ownedDir, err := prepareUnixSocketPath(want)
+	if err != nil {
+		t.Fatalf("prepareUnixSocketPath(custom) unexpected error: %v", err)
+	}
+	if path != want {
+		t.Fatalf("path = %q, want %q", path, want)
+	}
+	if ownedDir != "" {
+		t.Fatalf("ownedDir = %q, want empty for a caller-supplied path", ownedDir)
+	}
+}
+
+func TestRemoveUnixSocketRejectsRegularFile(t *testing.T) {
+	tmp, err := os.CreateTemp("", "glaze-regular-*")
+	if err != nil {
+		t.Fatalf("CreateTemp() unexpected error: %v", err)
+	}
+	path := tmp.Name()
+	err = tmp.Close()
+	if err != nil {
+		t.Fatalf("Close() unexpected error: %v", err)
+	}
+	defer func() { _ = os.Remove(path) }()
+
+	err = removeUnixSocket(path)
+	if err == nil {
+		t.Fatal("expected error when path is not a unix socket")
+	}
+}
