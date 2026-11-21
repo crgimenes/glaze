@@ -341,6 +341,7 @@ const (
 	kindMessage
 	kindScript
 	kindWebResourceRequested
+	kindCapture
 )
 
 type comHandlerVtbl struct {
@@ -487,6 +488,9 @@ func handlerInvoke(this, a, b uintptr) uintptr {
 		if b != 0 {
 			w.serveSchemeWindows(b)
 		}
+	case kindCapture:
+		// Invoke(this, HRESULT errorCode)
+		w.finishCapture(int32(a)) // #nosec G115 -- an HRESULT is 32 bits
 	}
 	return 0 // S_OK
 }
@@ -497,6 +501,8 @@ var (
 	coInitializeEx func(reserved uintptr, coinit uint32) int32
 	coTaskMemFree  func(p uintptr)
 	coTaskMemAlloc func(n uintptr) uintptr
+	// createStreamOnHGlobal backs Snapshot's capture (see snapshot_windows.go).
+	createStreamOnHGlobal func(hGlobal uintptr, deleteOnRelease int32, out *uintptr) int32
 
 	regOpenKeyExW    func(key uintptr, subkey *uint16, opts, desired uint32, out *uintptr) int32
 	regQueryValueExW func(key uintptr, name *uint16, reserved uintptr, typ *uint32, data *byte, dataLen *uint32) int32
@@ -546,6 +552,7 @@ func ensureCOMInit() error {
 		reg(&coInitializeEx, ole32, "CoInitializeEx")
 		reg(&coTaskMemFree, ole32, "CoTaskMemFree")
 		reg(&coTaskMemAlloc, ole32, "CoTaskMemAlloc")
+		reg(&createStreamOnHGlobal, ole32, "CreateStreamOnHGlobal")
 		reg(&regOpenKeyExW, advapi32, "RegOpenKeyExW")
 		reg(&regQueryValueExW, advapi32, "RegQueryValueExW")
 		reg(&regCloseKey, advapi32, "RegCloseKey")

@@ -46,6 +46,7 @@ One caveat, "self-contained" isn't misread: glaze does **not** bundle a browser 
 - A dependency-free code editor component (`glaze/editor`): line numbers, syntax highlighting, autocompletion, error marks — Filo and SQL definitions included, languages pluggable
 - Native file dialogs (`OpenFile`/`OpenFiles`/`SaveFile`/`OpenDirectory`) and a reusable native menu bar (`glaze/menu`)
 - Custom URL schemes: serve embedded assets from a portless, secure-context `app://` origin (`NewWithOptions`)
+- Page snapshots: `Snapshot` returns what the web view is showing as a PNG, in device pixels, on all three platforms (`glaze.Snapshotter`)
 - Window control from Go: `SetTitle`, `SetSize`, `Focus` (keyboard focus into the web content) and `Raise` (front the window and activate the app)
 - `NewWindow(debug, window)` embeds the WebView into an existing native window (`New` is the create-a-window shortcut)
 - Plays nicely with `go.work` multi-module setups

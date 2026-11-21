@@ -2,7 +2,6 @@ package core
 
 import (
 	"errors"
-	"fmt"
 	"time"
 	"unsafe"
 
@@ -10,7 +9,10 @@ import (
 )
 
 // Snapshot rasterizes the page with -[WKWebView takeSnapshotWithConfiguration:
-// completionHandler:] and returns PNG bytes.
+// completionHandler:] and returns PNG bytes. The default configuration leaves
+// snapshotWidth unset, so the NSImage is the view's size in points backed by a
+// bitmap at the window's backing scale: the PNG is in device pixels, 2x the
+// points on a Retina display. See Snapshotter for the contract.
 //
 // The completion handler is a block, which purego builds and copies for us —
 // the same pattern Find already uses for -findString:withConfiguration:
@@ -24,14 +26,15 @@ func (w *webview) Snapshot() ([]byte, error) {
 
 	performOnMain(func() {
 		if w.webView == 0 {
-			done <- result{err: errors.New("glaze: snapshot before the web view exists")}
+			done <- result{err: errSnapshotNoWebView}
 			return
 		}
 		autorelease(func() {
 			// WKSnapshotConfiguration exists from 10.13; nil is accepted and
 			// means "the whole visible rect at native scale".
 			var cfg objc.ID
-			if cls := objc.GetClass("WKSnapshotConfiguration"); cls != 0 {
+			cls := objc.GetClass("WKSnapshotConfiguration")
+			if cls != 0 {
 				cfg = objc.ID(cls).Send(sel("new")).Send(sel("autorelease"))
 			}
 			// WebKit copies the block; this reference is released below.
@@ -51,8 +54,10 @@ func (w *webview) Snapshot() ([]byte, error) {
 	select {
 	case r := <-done:
 		return r.png, r.err
-	case <-time.After(15 * time.Second):
-		return nil, errors.New("glaze: snapshot timed out (called from the UI thread?)")
+	case <-time.After(snapshotTimeout):
+		// The usual cause: called from the UI thread, which this wait then
+		// keeps from draining the main queue the completion arrives on.
+		return nil, errSnapshotTimeout
 	}
 }
 
@@ -82,5 +87,3 @@ func pngFromNSImage(image objc.ID) ([]byte, error) {
 	copy(out, unsafe.Slice((*byte)(ptr), int(n))) // #nosec G103 -- reading an NSData buffer
 	return out, nil
 }
-
-var _ = fmt.Sprintf
