@@ -76,6 +76,7 @@ func TestMain(m *testing.M) {
 		resHistory.Store(historyScenario())
 		resNewWindow.Store(newWindowScenario())
 		resFind.Store(findScenario())
+		resSnapshot.Store(snapshotScenario())
 		resZoom.Store(zoomScenario())
 		resDownload.Store(downloadScenario())
 		resEphemeral.Store(ephemeralScenario())

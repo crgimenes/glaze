@@ -419,6 +419,13 @@ type webview struct {
 	scriptDone  bool
 	lastScript  string
 
+	// Snapshot state (snapshot_windows.go). snapshotMu serializes callers;
+	// the rest is the one capture in flight and belongs to the UI thread.
+	snapshotMu    sync.Mutex
+	captureH      *comHandler
+	captureStream uintptr // IStream* that CapturePreview writes the PNG into
+	captureDone   chan snapshotResult
+
 	// schemeHandlers serve the app's assets from a custom secure origin instead
 	// of a loopback server; empty unless set via NewWithOptions.
 	schemeHandlers map[string]SchemeHandler

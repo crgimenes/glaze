@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 		resWinMinimizedNoThrott.Store(winThrottleScenario(Options{DisableThrottling: true}, true))
 		resWinOnClose.Store(winOnCloseScenario())
 		resWinScheme.Store(winSchemeScenario())
+		resSnapshot.Store(snapshotScenario())
 		resWinClose.Store(winCloseViaUIScenario()) // last: it ends with WM_QUIT
 	}
 	os.Exit(m.Run())
